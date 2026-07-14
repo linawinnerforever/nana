@@ -10,27 +10,35 @@ st.set_page_config(page_title="金蝶云星空-集团费重分类全自动工具
 st.title("📊 金蝶云星空 - 费用重分类集团全自动生成凭证工具")
 
 # ----------------------------------------------------
-# 集团 18 大主体真实财务静态配置库
+# 集团 18 大主体真实财务静态配置库（币别编码与名称严格对照系统档案修正）
 # ----------------------------------------------------
 COMPANY_CONFIG = {
-    "Crazy Maple Studio Inc": {"book_id": "100", "org_id": "002"},
-    "CRAZY MAPLE  SERVICE  COMPANY": {"book_id": "101", "org_id": "003"},
-    "Crazy Maple  Canada  Inc": {"book_id": "102", "org_id": "004"},
-    "Maple House Inc": {"book_id": "103", "org_id": "005"},
-    "CRAZY MAPLE  INTERACTIVE  HOLDING LTD": {"book_id": "104", "org_id": "006"},
-    "SPICY MAPLE  LIMITED": {"book_id": "105", "org_id": "007"},
-    "CRAZY MAPLE  STUDIO  HK LIMITED": {"book_id": "106", "org_id": "008"},
-    "New Leaf  Publishing  Inc": {"book_id": "107", "org_id": "009"},
-    "北京枫悦互动科技有限公司": {"book_id": "108", "org_id": "010"},
-    "深圳枫叶互动科技有限公司": {"book_id": "109", "org_id": "011"},
-    "杭州枫叶互动科技有限公司": {"book_id": "110", "org_id": "012"},
-    "B25 LIMITED": {"book_id": "111", "org_id": "013"},
-    "海南枫悦互动科技有限公司": {"book_id": "112", "org_id": "014"},
-    "北京枫悦互动科技有限公司工会委员会": {"book_id": "113", "org_id": "015"},
-    "深圳市星尘游戏科技有限公司": {"book_id": "114", "org_id": "016"},
-    "ReelShort Japan Co., Ltd.": {"book_id": "115", "org_id": "017"},
-    "SWEET MAPLE LIMITED": {"book_id": "116", "org_id": "018"},
-    "深圳枫悦互动科技有限公司": {"book_id": "117", "org_id": "019"}
+    "Crazy Maple Studio Inc": {"book_id": "100", "org_id": "002", "currency_id": "PRE007", "currency_name": "美元"},
+    "CRAZY MAPLE  SERVICE  COMPANY": {"book_id": "101", "org_id": "003", "currency_id": "PRE007", "currency_name": "美元"},
+    "Crazy Maple  Canada  Inc": {"book_id": "102", "org_id": "004", "currency_id": "PRE008", "currency_name": "加币"},
+    "Maple House Inc": {"book_id": "103", "org_id": "005", "currency_id": "PRE007", "currency_name": "美元"},
+    "CRAZY MAPLE  INTERACTIVE  HOLDING LTD": {"book_id": "104", "org_id": "006", "currency_id": "PRE007", "currency_name": "美元"},
+    "SPICY MAPLE  LIMITED": {"book_id": "105", "org_id": "007", "currency_id": "PRE007", "currency_name": "美元"},
+    "CRAZY MAPLE  STUDIO  HK LIMITED": {"book_id": "106", "org_id": "008", "currency_id": "PRE002", "currency_name": "香港元"},
+    "New Leaf  Publishing  Inc": {"book_id": "107", "org_id": "009", "currency_id": "PRE007", "currency_name": "美元"},
+    "北京枫悦互动科技有限公司": {"book_id": "108", "org_id": "010", "currency_id": "PRE001", "currency_name": "人民币"},
+    "深圳枫叶互动科技有限公司": {"book_id": "109", "org_id": "011", "currency_id": "PRE001", "currency_name": "人民币"},
+    "杭州枫叶互动科技有限公司": {"book_id": "110", "org_id": "012", "currency_id": "PRE001", "currency_name": "人民币"},
+    "B25 LIMITED": {"book_id": "111", "org_id": "013", "currency_id": "PRE007", "currency_name": "美元"},
+    "海南枫悦互动科技有限公司": {"book_id": "112", "org_id": "014", "currency_id": "PRE001", "currency_name": "人民币"},
+    "北京枫悦互动科技有限公司工会委员会": {"book_id": "113", "org_id": "015", "currency_id": "PRE001", "currency_name": "人民币"},
+    "深圳市星尘游戏科技有限公司": {"book_id": "114", "org_id": "016", "currency_id": "PRE001", "currency_name": "人民币"},
+    "ReelShort Japan Co., Ltd.": {"book_id": "115", "org_id": "017", "currency_id": "PRE004", "currency_name": "日本日圆"},
+    "SWEET MAPLE LIMITED": {"book_id": "116", "org_id": "018", "currency_id": "PRE007", "currency_name": "美元"},
+    "深圳枫悦互动科技有限公司": {"book_id": "117", "org_id": "019", "currency_id": "PRE001", "currency_name": "人民币"}
+}
+
+# 支持的标准币种字典清单（完全基于官方档案）
+CURRENCY_OPTIONS = {
+    "人民币 (PRE001)": {"id": "PRE001", "name": "人民币"},
+    "美元 (PRE007)": {"id": "PRE007", "name": "美元"},
+    "加币 (PRE008)": {"id": "PRE008", "name": "加币"},
+    "日本日圆 (PRE004)": {"id": "PRE004", "name": "日本日圆"}
 }
 
 # ----------------------------------------------------
@@ -45,7 +53,20 @@ selected_company = st.sidebar.selectbox("请选择本次做账的公司主体", 
 comp_info = COMPANY_CONFIG[selected_company]
 st.sidebar.success(f"📍 锁定主体：账簿({comp_info['book_id']}) | 组织({comp_info['org_id']})")
 
-# 2. 动态选择期间
+# 2. 动态币别选择框（自动关联主体的官方本位币，亦可手动修改）
+default_curr_label = f"{comp_info['currency_name']} ({comp_info['currency_id']})"
+if default_curr_label not in CURRENCY_OPTIONS:
+    CURRENCY_OPTIONS[default_curr_label] = {"id": comp_info['currency_id'], "name": comp_info['currency_name']}
+
+curr_labels = list(CURRENCY_OPTIONS.keys())
+selected_curr_label = st.sidebar.selectbox(
+    "请选择记账本位币 (FCURRENCYID)", 
+    options=curr_labels, 
+    index=curr_labels.index(default_curr_label)
+)
+chosen_currency = CURRENCY_OPTIONS[selected_curr_label]
+
+# 3. 动态选择期间
 current_year = st.sidebar.number_input("会计年度 (FYEAR)", min_value=2020, max_value=2035, value=2026)
 current_period = st.sidebar.slider("会计期间 (FPERIOD)", min_value=1, max_value=12, value=6)
 
@@ -147,7 +168,7 @@ if source_file and ratio_file:
         df_ratio = pd.read_excel(ratio_file, skiprows=ratio_header_idx)
         df_ratio.columns = df_ratio.columns.astype(str).str.strip()
         
-        st.success(f"✅ 文件加载就绪！当前做账主体为: 【{selected_company}】")
+        st.success(f"✅ 文件加载就绪！主体: 【{selected_company}】 | 币别: 【{chosen_currency['name']}】")
         
         if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
             project_cols = list(proj_text_to_code.keys())
@@ -157,7 +178,7 @@ if source_file and ratio_file:
             if df_to_split.empty:
                 st.warning("⚠️ 没有发现金额不为0的有效数字数据行。")
             
-            # 基准数据定义（用于注入第一行）
+            # 动态基准数据定义（采用完全契合官方档案的币别属性）
             base_info = {
                 'FBillHead(GL_VOUCHER)': 1,
                 'FAccountBookID': comp_info['book_id'],
@@ -173,8 +194,8 @@ if source_file and ratio_file:
                 'FISADJUSTVOUCHER': '否',
                 'FACCBOOKORGID': comp_info['org_id'],
                 'FACCBOOKORGID#Name': selected_company,
-                'FCURRENCYID': 'PRE001',
-                'FCURRENCYID#Name': '人民币',
+                'FCURRENCYID': chosen_currency['id'],
+                'FCURRENCYID#Name': chosen_currency['name'],
                 'FEXCHANGERATETYPE': 'HLTX01_SYS',
                 'FEXCHANGERATETYPE#Name': '固定汇率',
                 'FEXCHANGERATE': 1
@@ -230,13 +251,10 @@ if source_file and ratio_file:
                     # ----------------------------------------------------
                     neg_row = [None] * len(tech_headers)
                     
-                    # 严格判定：只有整张凭证的第一行（entry_idx == 1）填充单据头 A-R
+                    # 只有整张凭证的第一行（entry_idx == 1）填充单据头 A-R
                     if entry_idx == 1:
                         for k, v in base_info.items():
                             if k in tech_headers: neg_row[tech_headers.index(k)] = v
-                    else:
-                        # 后续行的单据头列全部保持为 None
-                        pass
                     
                     # 填充从 S 列 (*Split*1) 开始的分录级非空数据
                     neg_row[tech_headers.index('FEntity')] = entry_idx
@@ -246,7 +264,7 @@ if source_file and ratio_file:
                     neg_row[tech_headers.index('FDEBIT')] = -orig_amt
                     neg_row[tech_headers.index('FAMOUNTFOR')] = -orig_amt
                     
-                    # 金额后面的基础分录字段注入
+                    # 分录级币别与汇率填充（每一行必须携带系统档案里的币别属性）
                     for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                         neg_row[tech_headers.index(field)] = base_info[field]
                     
@@ -274,8 +292,7 @@ if source_file and ratio_file:
                         
                         pos_row = [None] * len(tech_headers)
                         
-                        # 再次严格判定：由于 entry_idx 肯定 > 1，此处 A-R 列全留空
-                        # 仅填充分录字段
+                        # 后续行 entry_idx > 1，单据头 A-R 严格留空
                         pos_row[tech_headers.index('FEntity')] = entry_idx
                         pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                         pos_row[tech_headers.index('FACCOUNTID')] = sub_code
@@ -283,7 +300,7 @@ if source_file and ratio_file:
                         pos_row[tech_headers.index('FDEBIT')] = amt
                         pos_row[tech_headers.index('FAMOUNTFOR')] = amt
                         
-                        # 金额后面的基础分录字段注入
+                        # 分录级币别与汇率填充（每一行必须携带系统档案里的币别属性）
                         for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                             pos_row[tech_headers.index(field)] = base_info[field]
                         
@@ -298,7 +315,7 @@ if source_file and ratio_file:
             
             if new_rows:
                 final_df = pd.DataFrame([tech_headers, cn_headers] + new_rows)
-                st.success(f"🎉 成功生成 【{selected_company}】 凭证！")
+                st.success(f"🎉 成功生成 【{selected_company}】 凭证！币别：【{chosen_currency['name']}】")
                 st.dataframe(final_df.iloc[2:15])
                 
                 output = io.BytesIO()
@@ -309,7 +326,7 @@ if source_file and ratio_file:
                 st.download_button(
                     label="📥 点击下载金蝶引入Excel凭证",
                     data=processed_data,
-                    file_name=f"金蝶云星空重分类凭证-{selected_company}-{voucher_date}.xlsx",
+                    file_name=f"金蝶云星空重分类凭证-{selected_company}-{chosen_currency['id']}-{voucher_date}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
     except Exception as e:
