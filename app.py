@@ -10,7 +10,7 @@ st.set_page_config(page_title="金蝶云星空-集团费重分类全自动工具
 st.title("📊 金蝶云星空 - 费用重分类集团全自动生成凭证工具")
 
 # ----------------------------------------------------
-# 集团 18 大主体真实财务静态配置库（币别编码与名称严格对照系统档案修正）
+# 集团 18 大主体真实财务静态配置库（币别编码与名称严格对照系统档案）
 # ----------------------------------------------------
 COMPANY_CONFIG = {
     "Crazy Maple Studio Inc": {"book_id": "100", "org_id": "002", "currency_id": "PRE007", "currency_name": "美元"},
@@ -37,6 +37,7 @@ COMPANY_CONFIG = {
 CURRENCY_OPTIONS = {
     "人民币 (PRE001)": {"id": "PRE001", "name": "人民币"},
     "美元 (PRE007)": {"id": "PRE007", "name": "美元"},
+    "香港元 (PRE002)": {"id": "PRE002", "name": "香港元"},
     "加币 (PRE008)": {"id": "PRE008", "name": "加币"},
     "日本日圆 (PRE004)": {"id": "PRE004", "name": "日本日圆"}
 }
@@ -53,7 +54,7 @@ selected_company = st.sidebar.selectbox("请选择本次做账的公司主体", 
 comp_info = COMPANY_CONFIG[selected_company]
 st.sidebar.success(f"📍 锁定主体：账簿({comp_info['book_id']}) | 组织({comp_info['org_id']})")
 
-# 2. 动态币别选择框（自动关联主体的官方本位币，亦可手动修改）
+# 2. 动态币别选择框
 default_curr_label = f"{comp_info['currency_name']} ({comp_info['currency_id']})"
 if default_curr_label not in CURRENCY_OPTIONS:
     CURRENCY_OPTIONS[default_curr_label] = {"id": comp_info['currency_id'], "name": comp_info['currency_name']}
@@ -108,12 +109,13 @@ tech_headers = [
     'FBUSNO', 'FEXPORTENTRYID'
 ]
 
+# 严格比对并替换为用户标准模板内的中文表头
 cn_headers = [
-    '*单据头(序号)', '*(单据头)账簿#编码', '(单据头)账簿#名称', '*(单据头)日期', '(单据头)业务日期', 
+    '*单据头序号', '*(单据头)账簿#编码', '(单据头)账簿#名称', '*(单据头)日期', '(单据头)业务日期', 
     '(单据头)会计年度', '(单据头)期间', '*(单据头)凭证字#编码', '(单据头)凭证字#名称', 
     '*(单据头)凭证号', '(单据头)附件数', '(单据头)是否调整凭证', '*(单据头)核算组织#编码', 
     '(单据头)核算组织#名称', '(单据头)来源系统', '(单据头)来源系统#名称', '(单据头)引入版本', 
-    '*分录(序号)', 'FEntity', '摘要', '科目控制#编码', '科目控制#名称', '往来单位#编码', 
+    '*分录序号', 'FEntity', '摘要', '*科目#编码', '科目#名称', '往来单位#编码', 
     '往来单位#名称', '项目#编码', '项目#名称', '第二核算维度#编码', '第二核算维度#名称', 
     '第三核算维度#编码', '第三核算维度#名称', '费用类别#编码', '费用类别#名称', '备用#编码', 
     '备用#名称', '第四核算维度#编码', '第四核算维度#名称', '第五核算维度#编码', '第五核算维度#名称', 
@@ -178,7 +180,7 @@ if source_file and ratio_file:
             if df_to_split.empty:
                 st.warning("⚠️ 没有发现金额不为0的有效数字数据行。")
             
-            # 动态基准数据定义（采用完全契合官方档案的币别属性）
+            # 基准单据头定义
             base_info = {
                 'FBillHead(GL_VOUCHER)': 1,
                 'FAccountBookID': comp_info['book_id'],
@@ -203,7 +205,6 @@ if source_file and ratio_file:
             
             new_rows = []
             entry_idx = 1
-            split_idx = tech_headers.index('*Split*1')
             
             for idx, row in df_to_split.iterrows():
                 try:
@@ -247,24 +248,26 @@ if source_file and ratio_file:
                     df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                     
                     # ----------------------------------------------------
-                    # 1. 借方负数行（冲销行）
+                    # 1. 冲销行：完全等同于待拆分金额（带原始正负号），写入借方 FDEBIT
                     # ----------------------------------------------------
                     neg_row = [None] * len(tech_headers)
                     
-                    # 只有整张凭证的第一行（entry_idx == 1）填充单据头 A-R
+                    # 第一行填充单据头 A-R
                     if entry_idx == 1:
                         for k, v in base_info.items():
                             if k in tech_headers: neg_row[tech_headers.index(k)] = v
                     
-                    # 填充从 S 列 (*Split*1) 开始的分录级非空数据
                     neg_row[tech_headers.index('FEntity')] = entry_idx
                     neg_row[tech_headers.index('FEXPLANATION')] = f"重分类-冲原公摊-{sub_name}"
                     neg_row[tech_headers.index('FACCOUNTID')] = sub_code
                     neg_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
-                    neg_row[tech_headers.index('FDEBIT')] = -orig_amt
-                    neg_row[tech_headers.index('FAMOUNTFOR')] = -orig_amt
                     
-                    # 分录级币别与汇率填充（每一行必须携带系统档案里的币别属性）
+                    # 冲销金额直接等于原待拆分金额，全部塞进借方
+                    neg_row[tech_headers.index('FDEBIT')] = orig_amt
+                    neg_row[tech_headers.index('FCREDIT')] = None
+                    neg_row[tech_headers.index('FAMOUNTFOR')] = None
+                    
+                    # 注入币别属性
                     for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                         neg_row[tech_headers.index(field)] = base_info[field]
                     
@@ -275,32 +278,36 @@ if source_file and ratio_file:
                     entry_idx += 1
                     
                     # ----------------------------------------------------
-                    # 2. 借方正数行（重分类分摊行）
+                    # 2. 分配行：按比例重分类拆分到的项目，也全部写入借方 FDEBIT
                     # ----------------------------------------------------
                     allocated_sum = 0.0
                     for i, p_row in enumerate(df_valid_proj.itertuples()):
                         is_last = (i == len(df_valid_proj) - 1)
                         current_ratio = p_row.ratio
                         
+                        # 确保分摊行总和与冲销行金额绝对相反，达到借方内轧平效果
                         if is_last:
-                            amt = round(orig_amt - allocated_sum, 2)
+                            amt = round(-orig_amt - allocated_sum, 2)
                         else:
-                            amt = round(orig_amt * current_ratio, 2)
+                            amt = round(-orig_amt * current_ratio, 2)
                             allocated_sum += amt
                             
                         if amt == 0: continue
                         
                         pos_row = [None] * len(tech_headers)
                         
-                        # 后续行 entry_idx > 1，单据头 A-R 严格留空
+                        # 后续行单据头 A-R 严格留空
                         pos_row[tech_headers.index('FEntity')] = entry_idx
                         pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                         pos_row[tech_headers.index('FACCOUNTID')] = sub_code
                         pos_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
-                        pos_row[tech_headers.index('FDEBIT')] = amt
-                        pos_row[tech_headers.index('FAMOUNTFOR')] = amt
                         
-                        # 分录级币别与汇率填充（每一行必须携带系统档案里的币别属性）
+                        # 分配金额也全部塞进借方
+                        pos_row[tech_headers.index('FDEBIT')] = amt
+                        pos_row[tech_headers.index('FCREDIT')] = None
+                        pos_row[tech_headers.index('FAMOUNTFOR')] = None
+                        
+                        # 注入币别属性
                         for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                             pos_row[tech_headers.index(field)] = base_info[field]
                         
@@ -315,7 +322,7 @@ if source_file and ratio_file:
             
             if new_rows:
                 final_df = pd.DataFrame([tech_headers, cn_headers] + new_rows)
-                st.success(f"🎉 成功生成 【{selected_company}】 凭证！币别：【{chosen_currency['name']}】")
+                st.success(f"🎉 成功生成 【{selected_company}】 借方内部重分类凭证！")
                 st.dataframe(final_df.iloc[2:15])
                 
                 output = io.BytesIO()
