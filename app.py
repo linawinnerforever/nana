@@ -8,9 +8,6 @@ import calendar
 st.set_page_config(page_title="金蝶云星空-集团费重分类全自动工具", layout="wide")
 
 st.title("📊 金蝶云星空 - 费用重分类集团全自动生成凭证工具")
-st.markdown("""
-上传费用明细与分摊比例，左侧直接选主体和期间，火箭一击即中！
-""")
 
 # ----------------------------------------------------
 # 集团 18 大主体真实财务静态配置库
@@ -160,21 +157,22 @@ if source_file and ratio_file:
             if df_to_split.empty:
                 st.warning("⚠️ 没有发现金额不为0的有效数字数据行。")
             
-            # 自动注入匹配的正确金蝶编码
+            # 基准数据定义（用于注入第一行）
             base_info = {
+                'FBillHead(GL_VOUCHER)': 1,
                 'FAccountBookID': comp_info['book_id'],
                 'FAccountBookID#Name': selected_company,
-                'FACCBOOKORGID': comp_info['org_id'],
-                'FACCBOOKORGID#Name': selected_company,
                 'FDate': voucher_date,
                 'FBUSDATE': voucher_date,
                 'FYEAR': int(current_year),
                 'FPERIOD': int(current_period),
-                'FVOUCHERGROUPID': '記',
-                'FVOUCHERGROUPID#Name': '记账凭证',
+                'FVOUCHERGROUPID': 'PRE001',
+                'FVOUCHERGROUPID#Name': '记',
                 'FVOUCHERGROUPNO': '1',
                 'FATTACHMENTS': 0,
                 'FISADJUSTVOUCHER': '否',
+                'FACCBOOKORGID': comp_info['org_id'],
+                'FACCBOOKORGID#Name': selected_company,
                 'FCURRENCYID': 'PRE001',
                 'FCURRENCYID#Name': '人民币',
                 'FEXCHANGERATETYPE': 'HLTX01_SYS',
@@ -227,11 +225,20 @@ if source_file and ratio_file:
                     
                     df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                     
-                    # 1. 借方负数行 (首行填充 A-R)
+                    # ----------------------------------------------------
+                    # 1. 借方负数行（冲销行）
+                    # ----------------------------------------------------
                     neg_row = [None] * len(tech_headers)
-                    for k, v in base_info.items():
-                        if k in tech_headers: neg_row[tech_headers.index(k)] = v
                     
+                    # 严格判定：只有整张凭证的第一行（entry_idx == 1）填充单据头 A-R
+                    if entry_idx == 1:
+                        for k, v in base_info.items():
+                            if k in tech_headers: neg_row[tech_headers.index(k)] = v
+                    else:
+                        # 后续行的单据头列全部保持为 None
+                        pass
+                    
+                    # 填充从 S 列 (*Split*1) 开始的分录级非空数据
                     neg_row[tech_headers.index('FEntity')] = entry_idx
                     neg_row[tech_headers.index('FEXPLANATION')] = f"重分类-冲原公摊-{sub_name}"
                     neg_row[tech_headers.index('FACCOUNTID')] = sub_code
@@ -239,13 +246,19 @@ if source_file and ratio_file:
                     neg_row[tech_headers.index('FDEBIT')] = -orig_amt
                     neg_row[tech_headers.index('FAMOUNTFOR')] = -orig_amt
                     
+                    # 金额后面的基础分录字段注入
+                    for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
+                        neg_row[tech_headers.index(field)] = base_info[field]
+                    
                     if 'FDetailID#FF100002' in tech_headers: neg_row[tech_headers.index('FDetailID#FF100002')] = '006'
                     if 'FDetailID#FFlex5' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
                     
                     new_rows.append(neg_row)
                     entry_idx += 1
                     
-                    # 2. 借方正数行 (后续行 A-R 完美留空)
+                    # ----------------------------------------------------
+                    # 2. 借方正数行（重分类分摊行）
+                    # ----------------------------------------------------
                     allocated_sum = 0.0
                     for i, p_row in enumerate(df_valid_proj.itertuples()):
                         is_last = (i == len(df_valid_proj) - 1)
@@ -260,21 +273,19 @@ if source_file and ratio_file:
                         if amt == 0: continue
                         
                         pos_row = [None] * len(tech_headers)
-                        for k, v in base_info.items():
-                            if k in tech_headers:
-                                k_idx = tech_headers.index(k)
-                                if k_idx >= split_idx:
-                                    pos_row[k_idx] = v
                         
-                        pos_row[tech_headers.index('FVOUCHERGROUPID')] = base_info['FVOUCHERGROUPID']
-                        pos_row[tech_headers.index('FVOUCHERGROUPNO')] = base_info['FVOUCHERGROUPNO']
-                        
+                        # 再次严格判定：由于 entry_idx 肯定 > 1，此处 A-R 列全留空
+                        # 仅填充分录字段
                         pos_row[tech_headers.index('FEntity')] = entry_idx
                         pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                         pos_row[tech_headers.index('FACCOUNTID')] = sub_code
                         pos_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
                         pos_row[tech_headers.index('FDEBIT')] = amt
                         pos_row[tech_headers.index('FAMOUNTFOR')] = amt
+                        
+                        # 金额后面的基础分录字段注入
+                        for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
+                            pos_row[tech_headers.index(field)] = base_info[field]
                         
                         if 'FDetailID#FF100002' in tech_headers: pos_row[tech_headers.index('FDetailID#FF100002')] = p_row.proj_code
                         if 'FDetailID#FFlex5' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
