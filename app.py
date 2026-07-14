@@ -173,7 +173,7 @@ if source_file and ratio_file:
         df_ratio = pd.read_excel(ratio_file, skiprows=ratio_header_idx)
         df_ratio.columns = df_ratio.columns.astype(str).str.strip()
         
-        st.success(f"✅ 费用表表头锁定成功！识别到的金额列为: 【{amt_col}】")
+        st.success(f"✅ 文件加载就绪！当前做账主体为: 【{selected_company}】")
         
         if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
             project_cols = list(proj_text_to_code.keys())
