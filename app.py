@@ -140,6 +140,7 @@ last_day = calendar.monthrange(current_year, current_period)[1]
 voucher_date = f"{current_year}-{str(current_period).zfill(2)}-{str(last_day).zfill(2)}"
 st.sidebar.info(f"📅 凭证自动生成日期：{voucher_date}")
 
+
 # ====================================================
 # 📦 密封舱一：💳 信用卡对账单智能理账（你专属自用）
 # ====================================================
@@ -235,16 +236,26 @@ def run_credit_card_tool():
                             if "PAYMENT" in desc.upper() or "CREDIT" in desc.upper(): continue
                             extracted_tx.append({"期间": f"{current_year}-{str(current_period).zfill(2)}", "持卡人": current_person, "交易日期": tx_date, "原始商户描述": desc.strip(), "金额": charge_val})
             df_tx = pd.DataFrame(extracted_tx)
+            
+            # 💡 财务大脑规则库咬合映射（已修复解包报错）
             def route_accounting(row):
-                desc = row['原始商户描述'].upper()
-                res = {"项目": "未分类支出(请在底稿修改)", "科目编码": "6602.04", "科目名称": "管理费用_办公费", "供应商": ""}
+                desc = str(row['原始商户描述']).upper()
+                project = "未分类支出(请在底稿修改)"
+                acct_code = "6602.04"
+                acct_name = "管理费用_办公费"
+                vendor = ""
                 for rule in MERCHANT_RULES:
                     if rule["keyword"].upper() in desc:
-                        res["项目"] = rule["project"]; res["科目编码"] = rule["acct_code"]; res["科目名称"] = rule["acct_name"]
-                        if "vendor" in rule: res["供应商"] = rule["vendor"]
+                        project = rule["project"]
+                        acct_code = rule["acct_code"]
+                        acct_name = rule["acct_name"]
+                        vendor = rule.get("vendor", "")
                         break
-                return pd.Series(res)
-            df_tx[['项目', '科目编码', '科目名称', '供应商']] = df_tx.apply(route_accounting, axis=1)
+                return project, acct_code, acct_name, vendor
+                
+            # 执行稳定咬合解析与列展开
+            df_tx[['项目', '科目编码', '科目名称', '供应商']] = df_tx.apply(route_accounting, axis=1, result_type='expand')
+            
             df_pivot = df_tx.groupby(['持卡人', '项目', '科目编码', '科目名称'])['金额'].sum().reset_index()
             df_voucher = generate_voucher_dataframe(df_pivot, ali_amt, ali_acct_debit, ali_acct_credit)
             
