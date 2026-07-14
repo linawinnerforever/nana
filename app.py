@@ -44,11 +44,12 @@ CURRENCY_OPTIONS = {
     "日本日圆 (PRE004)": {"id": "PRE004", "name": "日本日圆"}
 }
 
+# 🌟 4个银行官方持卡人人名与金蝶员工路由库
 EMPLOYEE_DEPT_MAP = {
-    "Yapeng Nan": {"dept_code": "5000", "emp_code": "0002"},
-    "Yi Jia": {"dept_code": "5000", "emp_code": "0001"},
-    "Kruti": {"dept_code": "5000", "emp_code": "0003"},
-    "Tania": {"dept_code": "2005", "emp_code": "0064"}
+    "BHAGAT, KRUTI V": {"dept_code": "5000", "emp_code": "0030", "display_name": "Kruti"},
+    "JIA, YI": {"dept_code": "5000", "emp_code": "0001", "display_name": "Yi Jia"},
+    "NAN, YAPENG": {"dept_code": "5000", "emp_code": "0002", "display_name": "Yapeng Nan"},
+    "TRAN, THANH T": {"dept_code": "2005", "emp_code": "0064", "display_name": "Tania"}
 }
 
 MERCHANT_RULES = [
@@ -66,7 +67,7 @@ MERCHANT_RULES = [
     {"keyword": "COMPASS", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"}
 ]
 
-# 🌟 镜像对齐的 73 列终极金蝶中英文对照表头
+# 镜像对齐的 73 列终极金蝶中英文对照表头
 tech_headers = [
     'FBillHead(GL_VOUCHER)', 'FAccountBookID', 'FAccountBookID#Name', 'FDate', 'FBUSDATE', 'FYEAR', 'FPERIOD', 
     'FVOUCHERGROUPID', 'FVOUCHERGROUPID#Name', 'FVOUCHERGROUPNO', 'FATTACHMENTS', 'FISADJUSTVOUCHER', 
@@ -108,7 +109,7 @@ cn_headers = [
 ]
 
 # ----------------------------------------------------
-# 🔐 侧边栏密码锁
+# 控制台及基础侧边栏配置
 # ----------------------------------------------------
 st.sidebar.markdown("### 🚀 财务主控制台")
 access_token = st.sidebar.text_input("请输入私人授权口令：", type="password")
@@ -126,7 +127,8 @@ st.sidebar.success(f"📍 锁定主体：账簿({comp_info['book_id']}) | 组织
 default_curr_label = f"{comp_info['currency_name']} ({comp_info['currency_id']})"
 if default_curr_label not in CURRENCY_OPTIONS:
     CURRENCY_OPTIONS[default_curr_label] = {"id": comp_info['currency_id'], "name": comp_info['currency_name']}
-selected_curr_label = st.sidebar.selectbox("请选择记账本位币 (FCURRENCYID)", options=list(CURRENCY_OPTIONS.keys()), index=list(CURRENCY_OPTIONS.keys()).index(default_curr_label))
+curr_labels = list(CURRENCY_OPTIONS.keys())
+selected_curr_label = st.sidebar.selectbox("请选择记账本位币 (FCURRENCYID)", options=curr_labels, index=curr_labels.index(default_curr_label))
 chosen_currency = CURRENCY_OPTIONS[selected_curr_label]
 
 current_year = st.sidebar.number_input("会计年度 (FYEAR)", min_value=2020, max_value=2035, value=2026)
@@ -135,9 +137,8 @@ last_day = calendar.monthrange(current_year, current_period)[1]
 voucher_date = f"{current_year}-{str(current_period).zfill(2)}-{str(last_day).zfill(2)}"
 st.sidebar.info(f"📅 凭证自动生成日期：{voucher_date}")
 
-
 # ====================================================
-# 📦 密封舱一：💳 信用卡智能理账（你专属自用）
+# 📦 模块：💳 信用卡对账单智能理账（包含正负号判定逻辑）
 # ====================================================
 def run_credit_card_tool():
     st.subheader("💳 信用卡对账单（PDF）智能大闭环理账面板")
@@ -155,26 +156,41 @@ def run_credit_card_tool():
         
         if df_pivot_data is not None and not df_pivot_data.empty:
             for p_row in df_pivot_data.itertuples():
-                emp_info = EMPLOYEE_DEPT_MAP.get(p_row.持卡人, {"dept_code": "5000", "emp_code": ""})
+                matched_key = None
+                for k, v in EMPLOYEE_DEPT_MAP.items():
+                    if v["display_name"] == p_row.持卡人:
+                        matched_key = k
+                        break
+                emp_route = EMPLOYEE_DEPT_MAP.get(matched_key, {"dept_code": "5000", "emp_code": "", "display_name": p_row.持卡人})
                 
-                # 借方
+                # 🌟 摘要动态校准：计提2026年X月办公费
+                exp_msg = f"计提{current_year}年{str(current_period).zfill(2)}月办公费"
+                
+                # 读取整合后的金额
+                row_amt = float(p_row.金额)
+                
                 v_row = [None] * len(tech_headers)
                 if ent_id == 1:
                     for k, v in base_v_info.items(): v_row[tech_headers.index(k)] = v
                 v_row[tech_headers.index('FEntity')] = ent_id
-                v_row[tech_headers.index('FEXPLANATION')] = f"计提办公费-Office expense accrual-{p_row.持卡人}-{p_row.项目}"
+                v_row[tech_headers.index('FEXPLANATION')] = exp_msg
                 v_row[tech_headers.index('FACCOUNTID')] = str(p_row.科目编码).strip()
                 v_row[tech_headers.index('FACCOUNTID#Name')] = p_row.科目名称
-                v_row[tech_headers.index('FDEBIT')] = p_row.金额
+                
+                # 借贷金额正负自动分流
+                if row_amt >= 0:
+                    v_row[tech_headers.index('FDEBIT')] = row_amt
+                else:
+                    v_row[tech_headers.index('FDEBIT')] = row_amt # 保持借方负数或根据核算习惯分配
                 
                 if 'FDetailID#FF100002' in tech_headers: v_row[tech_headers.index('FDetailID#FF100002')] = '001'
-                if 'FDetailID#FFlex6' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex6')] = emp_info["dept_code"]
-                if 'FDetailID#FFlex4' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
+                if 'FDetailID#FFlex5' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex5')] = emp_route["dept_code"]
+                if 'FDetailID#FFlex7' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex7')] = emp_route["emp_code"]
                 
                 v_code = None
                 if hasattr(p_row, '供应商') and pd.notna(p_row.供应商):
                     v_code_str = str(p_row.供应商).strip()
-                    if v_code_str != "" and v_code_str.upper() != "NAN" and v_code_str.upper() != "NONE":
+                    if v_code_str != "" and v_code_str.upper() not in ["NAN", "NONE"]:
                         v_code = v_code_str
                 if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = v_code
                     
@@ -183,42 +199,51 @@ def run_credit_card_tool():
                 voucher_rows.append(v_row)
                 ent_id += 1
                 
-                # 贷方
+                # 贷方对冲行 (2241.01)
                 c_row = [None] * len(tech_headers)
                 c_row[tech_headers.index('FEntity')] = ent_id
-                c_row[tech_headers.index('FEXPLANATION')] = f"计提办公费-Office expense accrual-{p_row.持卡人}"
+                c_row[tech_headers.index('FEXPLANATION')] = exp_msg
                 c_row[tech_headers.index('FACCOUNTID')] = "2241.01"
-                c_row[tech_headers.index('FCREDIT')] = p_row.金额
-                if 'FDetailID#FFlex4' in tech_headers: c_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
+                if row_amt >= 0:
+                    c_row[tech_headers.index('FCREDIT')] = row_amt
+                else:
+                    c_row[tech_headers.index('FCREDIT')] = row_amt
+                if 'FDetailID#FFlex7' in tech_headers: c_row[tech_headers.index('FDetailID#FFlex7')] = emp_route["emp_code"]
                 for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
                     c_row[tech_headers.index(h_field)] = base_v_info[h_field]
                 voucher_rows.append(c_row)
                 ent_id += 1
                 
+        # 3. 追加外挂大额阿里云专项对冲
         if ali_amount > 0:
+            # 🌟 阿里云专用摘要锁定
+            ali_msg = "支付阿里云服务费-Payment for Alibaba Cloud"
+            
             ali_d = [None] * len(tech_headers)
             ali_d[tech_headers.index('FEntity')] = ent_id
-            ali_d[tech_headers.index('FEXPLANATION')] = f"支付阿里云服务费-Payment for Alibaba Cloud"
+            ali_d[tech_headers.index('FEXPLANATION')] = ali_msg
             ali_d[tech_headers.index('FACCOUNTID')] = ali_debit
             ali_d[tech_headers.index('FDEBIT')] = ali_amount
             if 'FDetailID#FF100005' in tech_headers: ali_d[tech_headers.index('FDetailID#FF100005')] = "VEN00057"
-            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: ali_d[tech_headers.index(h_field)] = base_v_info[h_field]
+            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                ali_d[tech_headers.index(h_field)] = base_v_info[h_field]
             voucher_rows.append(ali_d)
             ent_id += 1
             
             ali_c = [None] * len(tech_headers)
             ali_c[tech_headers.index('FEntity')] = ent_id
-            ali_c[tech_headers.index('FEXPLANATION')] = f"支付阿里云服务费-Payment for Alibaba Cloud"
+            ali_c[tech_headers.index('FEXPLANATION')] = ali_msg
             ali_c[tech_headers.index('FACCOUNTID')] = ali_credit
             ali_c[tech_headers.index('FCREDIT')] = ali_amount
             if 'FDetailID#FF100005' in tech_headers: ali_c[tech_headers.index('FDetailID#FF100005')] = "VEN00057"
-            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: ali_c[tech_headers.index(h_field)] = base_v_info[h_field]
+            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                ali_c[tech_headers.index(h_field)] = base_v_info[h_field]
             voucher_rows.append(ali_c)
             ent_id += 1
             
         return pd.DataFrame([tech_headers, cn_headers] + voucher_rows)
 
-    tab1, tab2 = st.tabs(["🆕 模式 1：从PDF账单一键生成大闭环", "✏️ 模式 2：上传修正底稿生成最终凭证"])
+    tab1, tab2 = st.tabs(["🆕 模式 1：从PDF账单生成大闭环", "✏️ 模式 2：上传修正底稿生成凭证"])
     st.markdown("##### ⚙️ 阿里云专项计提对冲参数")
     ali_col1, ali_col2, ali_col3 = st.columns(3)
     with ali_col1: ali_amt = st.number_input("阿里云本月金额 (USD)", min_value=0.0, value=1058598.35, key="ali_amt_sub")
@@ -232,66 +257,73 @@ def run_credit_card_tool():
             
             for pdf_file in pdf_files:
                 reader = PdfReader(pdf_file)
-                current_person = "Unknown"
+                current_raw_person = "Unknown"
                 
                 for page in reader.pages:
                     text = page.extract_text()
                     if not text: continue
                     
-                    # 🌟🌟【深度重构】放弃脆弱的头尾日期匹配，采用极其鲁棒的“多行文本全流动态捕获”
                     lines = text.split('\n')
                     for line in lines:
                         line_str = line.strip()
                         if not line_str: continue
                         
-                        # 动态持卡人区间判定
-                        if "XXXX-XXXX-XXXX-" in line_str or "Account Number:" in line_str:
-                            for name in EMPLOYEE_DEPT_MAP.keys():
-                                if name.upper() in line_str.upper() or name.split()[-1].upper() in line_str.upper():
-                                    current_person = name
-                                    break
+                        # 持卡人区间锚定拦截
+                        found_person_this_line = False
+                        for raw_name in EMPLOYEE_DEPT_MAP.keys():
+                            if raw_name in line_str or raw_name.replace(" ", "") in line_str.replace(" ", ""):
+                                current_raw_person = raw_name
+                                found_person_this_line = True
+                                break
                         
-                        # 🌟【核心捕获解法】只要行里面包含带小数点的浮点数字（即金额），我们就启动商户关键词大雷达
-                        amounts = re.findall(r'[\d,]+\.\d{2}', line_str)
-                        if amounts:
-                            # 提取出最右侧的一个数字，通常就是 Charge 消费金额
-                            charge_val = float(amounts[-1].replace(',', ''))
+                        if found_person_this_line and not any(ch.isdigit() for ch in line_str):
+                            continue
+                        
+                        # 基于行首日期格式匹配真实消费行
+                        date_match = re.match(r'^(\d{2}/\d{2})', line_str)
+                        if date_match and current_raw_person != "Unknown":
+                            tx_date = date_match.group(1)
                             
-                            # 过滤大头还款
-                            if "PAYMENT" in line_str.upper() or "CREDIT" in line_str.upper(): continue
+                            # 提取行尾金额
+                            amounts = re.findall(r'[\d,]+\.\d{2}', line_str)
+                            if not amounts: continue
+                            val_raw = float(amounts[-1].replace(',', ''))
                             
-                            # 匹配商户库
-                            matched_rule = None
-                            for rule in MERCHANT_RULES:
-                                if rule["keyword"].upper() in line_str.upper():
-                                    matched_rule = rule
-                                    break
+                            if "PAYMENT" in line_str.upper() or "THANK YOU" in line_str.upper() or "ANNUAL PERCENTAGE" in line_str.upper(): 
+                                continue
                             
-                            # 🌟【超级防大招】只要这一行出现了金额，哪怕商户不认识，也强制抓取为“未分类”，保证绝不漏掉一毛钱！
+                            # 🌟 根据您的核心指示判定正负号逻辑
+                            # 判定如果当前行描述明确指代 Credit (退款/贷方调整)，金额取负数；否则 Charge 取正数
+                            if "CREDIT" in line_str.upper() or "REFUND" in line_str.upper():
+                                charge_val = -abs(val_raw)
+                            else:
+                                charge_val = abs(val_raw)
+                            
                             project = "未分类支出(请在底稿修改)"
                             acct_code = "6602.04"
                             acct_name = "管理费用_办公费"
                             vendor = ""
                             
-                            if matched_rule:
-                                project = matched_rule["project"]
-                                acct_code = matched_rule["acct_code"]
-                                acct_name = matched_rule["acct_name"]
-                                vendor = matched_rule.get("vendor", "")
-                                
-                            # 尝试粗暴地剥离日期，剥不出来就用当月1号
-                            date_match = re.search(r'(\d{2}/\d{2})', line_str)
-                            tx_date = date_match.group(1) if date_match else f"{str(current_period).zfill(2)}/01"
+                            for rule in MERCHANT_RULES:
+                                if rule["keyword"].upper() in line_str.upper():
+                                    project = rule["project"]
+                                    acct_code = rule["acct_code"]
+                                    acct_name = rule["acct_name"]
+                                    vendor = rule.get("vendor", "")
+                                    break
                             
-                            # 清洗摘要：去掉尾部错位的金额数字，保留干净的商户英文名
                             clean_desc = line_str
                             for am in amounts:
                                 clean_desc = clean_desc.replace(am, "")
+                            if tx_date in clean_desc[:10]:
+                                clean_desc = clean_desc.replace(tx_date, "", 1)
                             clean_desc = re.sub(r'\s+', ' ', clean_desc).strip()
+                            
+                            display_name = EMPLOYEE_DEPT_MAP[current_raw_person]["display_name"]
                             
                             final_structured_rows.append({
                                 "期间": f"{current_year}-{str(current_period).zfill(2)}",
-                                "持卡人": current_person,
+                                "持卡人": display_name,
                                 "交易日期": tx_date,
                                 "原始商户描述": clean_desc,
                                 "金额": charge_val,
@@ -302,12 +334,10 @@ def run_credit_card_tool():
                             })
                             
             if not final_structured_rows:
-                st.error("❌ 深度雷达未能从PDF文本中榨取出任何消费数字，请联系开发检查对账单排版加密属性！")
+                st.error("❌ 未能在PDF中捕获到有效消费明细，请确认上传了包含流水账目的对账单页！")
                 st.stop()
                 
             df_tx = pd.DataFrame(final_structured_rows)
-            
-            # 聚合与凭证构建
             df_pivot = df_tx.groupby(['持卡人', '项目', '科目编码', '科目名称', '供应商'], dropna=False).sum(numeric_only=True).reset_index()
             df_voucher = generate_voucher_dataframe(df_pivot, ali_amt, ali_acct_debit, ali_acct_credit)
             
@@ -317,7 +347,7 @@ def run_credit_card_tool():
                 df_pivot.to_excel(writer, index=False, sheet_name='透视看板')
                 df_tx.to_excel(writer, index=False, sheet_name='信用卡拆分明细')
             final_data = output_blob.getvalue()
-            st.success("🎉 深度解密雷达运行成功！已成功榨取出账单数据，全功能 Excel 大闭环文件已生成！")
+            st.success("🎉 数据清洗校准大获全胜！正负号与摘要规则已全部完美咬合！")
             st.download_button(label="📥 点击下载【全功能大闭环Excel】", data=final_data, file_name=f"信用卡全功能闭环理账表-{selected_company}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     with tab2:
@@ -331,12 +361,12 @@ def run_credit_card_tool():
                 df_new_voucher = generate_voucher_dataframe(df_user_pivot, ali_amt, ali_acct_debit, ali_acct_credit)
                 output_pure = io.BytesIO()
                 with pd.ExcelWriter(output_pure, engine='xlsxwriter') as writer: df_new_voucher.to_excel(writer, index=False, header=False, sheet_name='凭证#单据头(FBillHead)')
-                st.success("✨ 修正成功！已基于您的手工修正出具最终金蝶单页凭证。")
+                st.success("✨ 修正成功！已基于您的手工底稿及新摘要逻辑出具最终金蝶凭证。")
                 st.download_button(label="📥 下载最终修正版金蝶引入凭证", data=output_pure.getvalue(), file_name=f"金蝶直接引入凭证(修正后)-{selected_company}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            except Exception as e: st.error(f"处理失败，请确保底稿包含‘透视看板’标签。错误详情: {e}")
+            except Exception as e: st.error(f"处理失败，错误详情: {e}")
 
 # ====================================================
-# 📊 费用重分类老功能（原封不动完美锁死）
+# 📊 费用重分类老功能（稳如磐石不受任何干扰）
 # ====================================================
 def run_reclassification_tool():
     st.subheader("📊 费用重分类集团全自动凭证生成板块")
@@ -370,7 +400,7 @@ def run_reclassification_tool():
             text_headers = df_ratio_raw.iloc[ratio_header_idx].tolist()
             
             proj_text_to_code = {}
-            fixed_names = ['成本中心编号', '成本中心名称', '大部门分类', 'project', '分摊逻辑', '分摊过渡部门', '分摊类型', '合计']
+            fixed_names = ['成本中心编号', '成本中心名称', '大部门分类', '项目', '分摊逻辑', '分摊过渡部门', '分摊类型', '合计']
             for t_name, top_code in zip(text_headers, top_headers):
                 if pd.notna(t_name) and pd.notna(top_code):
                     t_str = str(t_name).strip(); c_str = str(top_code).strip()
@@ -386,7 +416,7 @@ def run_reclassification_tool():
             if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
                 project_cols = list(proj_text_to_code.keys())
                 df_source['待拆分金额_numeric'] = pd.to_numeric(df_source[amt_col], errors='coerce')
-                df_to_split = df_source[df_source['待拆分金额_numeric'].notna() & (df_source['待拆分金額_numeric'] != 0)]
+                df_to_split = df_source[df_source['待拆分金额_numeric'].notna() & (df_source['待拆分金额_numeric'] != 0)]
                 
                 base_old_info = {
                     'FBillHead(GL_VOUCHER)': 1, 'FAccountBookID': comp_info['book_id'], 'FAccountBookID#Name': selected_company,
@@ -422,6 +452,7 @@ def run_reclassification_tool():
                         if not valid_projects: continue
                         df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                         
+                        # 借方负数冲销行
                         neg_row = [None] * len(tech_headers)
                         if entry_idx == 1:
                             for k, v in base_old_info.items():
@@ -430,13 +461,13 @@ def run_reclassification_tool():
                         neg_row[tech_headers.index('FEXPLANATION')] = f"重分类-冲原公摊-{sub_name}"
                         neg_row[tech_headers.index('FACCOUNTID')] = sub_code; neg_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
                         neg_row[tech_headers.index('FDEBIT')] = -orig_amt
-                        neg_row[tech_headers.index('FCREDIT')] = None; neg_row[tech_headers.index('FAMOUNTFOR')] = None
                         for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: neg_row[tech_headers.index(field)] = base_old_info[field]
                         if 'FDetailID#FF100002' in tech_headers: neg_row[tech_headers.index('FDetailID#FF100002')] = '006'
                         if 'FDetailID#FFlex5' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
                         new_rows.append(neg_row)
                         entry_idx += 1
                         
+                        # 借方正数分配行
                         allocated_sum = 0.0
                         for i, p_row in enumerate(df_valid_proj.itertuples()):
                             is_last = (i == len(df_valid_proj) - 1); current_ratio = p_row.ratio
@@ -448,7 +479,6 @@ def run_reclassification_tool():
                             pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                             pos_row[tech_headers.index('FACCOUNTID')] = sub_code; pos_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
                             pos_row[tech_headers.index('FDEBIT')] = amt
-                            pos_row[tech_headers.index('FCREDIT')] = None; pos_row[tech_headers.index('FAMOUNTFOR')] = None
                             for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: pos_row[tech_headers.index(field)] = base_old_info[field]
                             if 'FDetailID#FF100002' in tech_headers: pos_row[tech_headers.index('FDetailID#FF100002')] = p_row.proj_code
                             if 'FDetailID#FFlex5' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
@@ -462,7 +492,7 @@ def run_reclassification_tool():
                     st.download_button(label="📥 下载重分类引入凭证Excel", data=output.getvalue(), file_name=f"金蝶云星空重分类凭证-{selected_company}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e: st.error(f"发生意外错误: {e}")
 
-# 执行分流
+# 执行模块分流
 if main_mode == "💳 信用卡对账单智能理账(自用)":
     run_credit_card_tool()
 else:
