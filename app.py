@@ -51,19 +51,20 @@ EMPLOYEE_DEPT_MAP = {
     "Tania": {"dept_code": "2005", "emp_code": "0064"}
 }
 
+# 信用卡商户智能会计策略规则库（严格遵循：只有特定软件、版权、阿里挂供应商，其余不挂）
 MERCHANT_RULES = [
-    {"keyword": "DEEPL", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
+    {"keyword": "DEEPL", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
     {"keyword": "ANTHROPIC", "project": "软件使用费-ANTHROPIC", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN02027"},
     {"keyword": "Google CLOUD", "project": "软件使用费-Google Cloud", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN00057"},
-    {"keyword": "GOOGLE *ReelShort", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
-    {"keyword": "GOOGLE *SVCSCRAZYMAPLES", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
-    {"keyword": "ADOBE", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
-    {"keyword": "ZOOM.COM", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
-    {"keyword": "UBER *ONE", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利"},
-    {"keyword": "OLIVE GARDEN", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利"},
-    {"keyword": "INTUIT", "project": "软件使用费-Office expense", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
-    {"keyword": "OPENAI", "project": "软件使用费-OPENAI", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费"},
-    {"keyword": "COMPASS", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"}
+    {"keyword": "GOOGLE *ReelShort", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "GOOGLE *SVCSCRAZYMAPLES", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "ADOBE", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "ZOOM.COM", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "UBER *ONE", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利", "vendor": ""},
+    {"keyword": "OLIVE GARDEN", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利", "vendor": ""},
+    {"keyword": "INTUIT", "project": "软件使用费-Office expense", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "OPENAI", "project": "软件使用费-OPENAI", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN02277"},
+    {"keyword": "COMPASS", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""}
 ]
 
 # 🌟 镜像对齐的 73 列终极金蝶中英文对照表头
@@ -159,6 +160,8 @@ def run_credit_card_tool():
         ent_id = 1
         for p_row in df_pivot_data.itertuples():
             emp_info = EMPLOYEE_DEPT_MAP.get(p_row.持卡人, {"dept_code": "5000", "emp_code": ""})
+            
+            # 借方行
             v_row = [None] * len(tech_headers)
             if ent_id == 1:
                 for k, v in base_v_info.items(): v_row[tech_headers.index(k)] = v
@@ -167,23 +170,36 @@ def run_credit_card_tool():
             v_row[tech_headers.index('FACCOUNTID')] = str(p_row.科目编码).strip()
             v_row[tech_headers.index('FACCOUNTID#Name')] = p_row.科目名称
             v_row[tech_headers.index('FDEBIT')] = p_row.金额
+            
+            # 注入基础辅助维度
             if 'FDetailID#FF100002' in tech_headers: v_row[tech_headers.index('FDetailID#FF100002')] = '001'
             if 'FDetailID#FFlex6' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex6')] = emp_info["dept_code"]
             if 'FDetailID#FFlex4' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
-            if hasattr(p_row, '供应商') and p_row.供应商 and 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = p_row.供应商
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: v_row[tech_headers.index(f)] = base_v_info[f]
+            
+            # 【根据财务真实要求】有供应商代码且属于特定费用时才挂载供应商，其余一律留空
+            if hasattr(p_row, '供应商') and p_row.供应商 and str(p_row.供应商).strip() != "":
+                if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = str(p_row.供应商).strip()
+            else:
+                if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = None
+                
+            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                v_row[tech_headers.index(f)] = base_v_info[f]
             voucher_rows.append(v_row)
             ent_id += 1
             
+            # 贷方对冲行 (2241.01)
             c_row = [None] * len(tech_headers)
             c_row[tech_headers.index('FEntity')] = ent_id
             c_row[tech_headers.index('FEXPLANATION')] = f"计提办公费-Office expense accrual-{p_row.持卡人}"
             c_row[tech_headers.index('FACCOUNTID')] = "2241.01"
             c_row[tech_headers.index('FCREDIT')] = p_row.金额
             if 'FDetailID#FFlex4' in tech_headers: c_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: c_row[tech_headers.index(f)] = base_v_info[f]
+            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                c_row[tech_headers.index(f)] = base_v_info[f]
             voucher_rows.append(c_row)
             ent_id += 1
+            
+        # 3. 追加阿里云特殊计提对冲分录（已修复未定义变量变量报错）
         if ali_amount > 0:
             ali_d = [None] * len(tech_headers)
             ali_d[tech_headers.index('FEntity')] = ent_id
@@ -191,7 +207,8 @@ def run_credit_card_tool():
             ali_d[tech_headers.index('FACCOUNTID')] = ali_debit
             ali_d[tech_headers.index('FDEBIT')] = ali_amount
             if 'FDetailID#FF100005' in tech_headers: ali_d[tech_headers.index('FDetailID#FF100005')] = "VEN00057"
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: ali_d[tech_headers.index(f)] = base_v_info[f]
+            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                ali_d[tech_headers.index(f)] = base_v_info[f]
             voucher_rows.append(ali_d)
             ent_id += 1
             
@@ -201,9 +218,11 @@ def run_credit_card_tool():
             ali_c[tech_headers.index('FACCOUNTID')] = ali_credit
             ali_c[tech_headers.index('FCREDIT')] = ali_amount
             if 'FDetailID#FF100005' in tech_headers: ali_c[tech_headers.index('FDetailID#FF100005')] = "VEN00057"
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: ali_c[tech_headers.index(f)] = base_v_info[f]
+            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                ali_c[tech_headers.index(f)] = base_v_info[f]
             voucher_rows.append(ali_c)
             ent_id += 1
+            
         return pd.DataFrame([tech_headers, cn_headers] + voucher_rows)
 
     tab1, tab2 = st.tabs(["🆕 模式 1：从PDF账单一键生成大闭环", "✏️ 模式 2：上传修正底稿生成最终凭证"])
@@ -237,7 +256,7 @@ def run_credit_card_tool():
                             extracted_tx.append({"期间": f"{current_year}-{str(current_period).zfill(2)}", "持卡人": current_person, "交易日期": tx_date, "原始商户描述": desc.strip(), "金额": charge_val})
             df_tx = pd.DataFrame(extracted_tx)
             
-            # 💡 财务大脑规则库咬合映射（已修复解包报错）
+            # 💡 修复元组解包及供应商判定逻辑
             def route_accounting(row):
                 desc = str(row['原始商户描述']).upper()
                 project = "未分类支出(请在底稿修改)"
@@ -253,10 +272,14 @@ def run_credit_card_tool():
                         break
                 return project, acct_code, acct_name, vendor
                 
-            # 执行稳定咬合解析与列展开
-            df_tx[['项目', '科目编码', '科目名称', '供应商']] = df_tx.apply(route_accounting, axis=1, result_type='expand')
+            # 执行稳定咬合解析与扩展
+            res_apply = df_tx.apply(route_accounting, axis=1, result_type='expand')
+            df_tx['项目'] = res_apply[0]
+            df_tx['科目编码'] = res_apply[1]
+            df_tx['科目名称'] = res_apply[2]
+            df_tx['供应商'] = res_apply[3]
             
-            df_pivot = df_tx.groupby(['持卡人', '项目', '科目编码', '科目名称'])['金额'].sum().reset_index()
+            df_pivot = df_tx.groupby(['持卡人', '项目', '科目编码', '科目名称', '供应商'], dropna=False).sum(numeric_only=True).reset_index()
             df_voucher = generate_voucher_dataframe(df_pivot, ali_amt, ali_acct_debit, ali_acct_credit)
             
             output_blob = io.BytesIO()
@@ -326,10 +349,8 @@ def run_reclassification_tool():
             df_ratio = pd.read_excel(ratio_file, skiprows=ratio_header_idx)
             df_ratio.columns = df_ratio.columns.astype(str).str.strip()
             
-            # 🌟🌟【已修改】更新为您的最新描述表述
             st.success(f"✅ 文件加载就绪！当前做账主体为: 【{selected_company}】")
             
-            # 🌟🌟【已修改】更新为您的最新按钮文字表述
             if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
                 project_cols = list(proj_text_to_code.keys())
                 df_source['待拆分金额_numeric'] = pd.to_numeric(df_source[amt_col], errors='coerce')
