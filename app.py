@@ -77,7 +77,7 @@ voucher_date = f"{current_year}-{str(current_period).zfill(2)}-{str(last_day).zf
 st.sidebar.info(f"📅 凭证自动生成日期：{voucher_date}")
 
 # ----------------------------------------------------
-# 主界面：极简两个上传框
+# 主界面：上传框
 # ----------------------------------------------------
 col1, col2 = st.columns(2)
 
@@ -89,27 +89,28 @@ with col2:
     st.subheader("2. 上传部门项目分摊比例表")
     ratio_file = st.file_uploader("支持 .xlsx 格式，需含：第一行数字编码，第二行文字名称的二维比例矩阵", type=["xlsx"], key="ratio")
 
-# 金蝶云星空底层固定的 43 列标准英文表头架构
+# ----------------------------------------------------
+# 严格按照凭证表头.xlsx逐字匹配对齐的 73 列中英文矩阵架构
+# ----------------------------------------------------
 tech_headers = [
     'FBillHead(GL_VOUCHER)', 'FAccountBookID', 'FAccountBookID#Name', 'FDate', 'FBUSDATE', 'FYEAR', 'FPERIOD', 
     'FVOUCHERGROUPID', 'FVOUCHERGROUPID#Name', 'FVOUCHERGROUPNO', 'FATTACHMENTS', 'FISADJUSTVOUCHER', 
     'FACCBOOKORGID', 'FACCBOOKORGID#Name', 'FSourceBillKey', 'FSourceBillKey#Name', 'FIMPORTVERSION', 
-    '*Split*1', 'FEntity', 'FEXPLANATION', 'FACCOUNTID', 'FACCOUNTID#Name', 'FDetailID#FF100003', 
-    'FDetailID#FF100003#Name', 'FDetailID#FF100002', 'FDetailID#FF100002#Name', 'FDetailID#FFLEX16', 
-    'FDetailID#FFLEX16#Name', 'FDetailID#FFLEX15', 'FDetailID#FFLEX15#Name', 'FDetailID#FFLEX14', 
-    'FDetailID#FFLEX14#Name', 'FDetailID#FFLEX13', 'FDetailID#FFLEX13#Name', 'FDetailID#FFLEX12', 
-    'FDetailID#FFLEX12#Name', 'FDetailID#FFLEX11', 'FDetailID#FFLEX11#Name', 'FDetailID#FFlex10', 
-    'FDetailID#FFlex10#Name', 'FDetailID#FFLEX9', 'FDetailID#FFLEX9#Name', 'FDetailID#FFlex8', 
-    'FDetailID#FFlex8#Name', 'FDetailID#FFlex7', 'FDetailID#FFlex7#Name', 'FDetailID#FFlex6', 
-    'FDetailID#FFlex6#Name', 'FDetailID#FFlex5', 'FDetailID#FFlex5#Name', 'FDetailID#FFlex4', 
-    'FDetailID#FFlex4#Name', 'FDetailID#FF100004', 'FDetailID#FF100004#Name', 'FDetailID#FF100005', 
-    'FDetailID#FF100005#Name', 'FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 
-    'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE', 'FUnitId', 'FUnitId#Name', 'FPrice', 'FQty', 
-    'FAMOUNTFOR', 'FDEBIT', 'FCREDIT', 'FSettleTypeID', 'FSettleTypeID#Name', 'FSETTLENO', 
-    'FBUSNO', 'FEXPORTENTRYID'
+    '*Split*1', 'FEntity', 'FEXPLANATION', 'FACCOUNTID', 'FACCOUNTID#Name', 
+    'FDetailID#FF100003', 'FDetailID#FF100003#Name', 'FDetailID#FF100002', 'FDetailID#FF100002#Name', 
+    'FDetailID#FFLEX16', 'FDetailID#FFLEX16#Name', 'FDetailID#FFLEX15', 'FDetailID#FFLEX15#Name', 
+    'FDetailID#FFLEX14', 'FDetailID#FFLEX14#Name', 'FDetailID#FFLEX13', 'FDetailID#FFLEX13#Name', 
+    'FDetailID#FFLEX12', 'FDetailID#FFLEX12#Name', 'FDetailID#FFLEX11', 'FDetailID#FFLEX11#Name', 
+    'FDetailID#FFlex10', 'FDetailID#FFlex10#Name', 'FDetailID#FFLEX9', 'FDetailID#FFLEX9#Name', 
+    'FDetailID#FFlex8', 'FDetailID#FFlex8#Name', 'FDetailID#FFlex7', 'FDetailID#FFlex7#Name', 
+    'FDetailID#FFlex6', 'FDetailID#FFlex6#Name', 'FDetailID#FFlex5', 'FDetailID#FFlex5#Name', 
+    'FDetailID#FFlex4', 'FDetailID#FFlex4#Name', 'FDetailID#FF100004', 'FDetailID#FF100004#Name', 
+    'FDetailID#FF100005', 'FDetailID#FF100005#Name', 
+    'FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE', 
+    'FUnitId', 'FUnitId#Name', 'FPrice', 'FQty', 'FAMOUNTFOR', 'FDEBIT', 'FCREDIT', 
+    'FSettleTypeID', 'FSettleTypeID#Name', 'FSETTLENO', 'FBUSNO', 'FEXPORTENTRYID'
 ]
 
-# 严格对照您发来的凭证表头.xlsx中第2列中文，字字对齐
 cn_headers = [
     '*单据头(序号)', '*(单据头)账簿#编码', '(单据头)账簿#名称', '*(单据头)日期', '(单据头)业务日期', 
     '(单据头)会计年度', '(单据头)期间', '*(单据头)凭证字#编码', '(单据头)凭证字#名称', 
@@ -124,9 +125,9 @@ cn_headers = [
     '(分录)物料#编码', '(分录)物料#名称(Null)', '(分录)国家/地区#编码', '(分录)国家/地区#名称(Null)', 
     '(分录)部门_海外#编码', '(分录)部门_海外#名称(Null)', '(分录)成本中心#编码', '(分录)成本中心#名称(Null)', 
     '(分录)职员#编码', '(分录)职员#名称(Null)', '(分录)客户#编码', '(分录)客户#名称(Null)', 
-    '(分录)供应商#编码', '(分录)供应商#名称(Null)', '(分录)币别#编码', '(分录)币别#名称', 
-    '(分录)汇率类型#编码', '(分录)汇率类型#名称', '(分录)汇率', '(分录)计量单位#编码', 
-    '(分录)计量单位#名称(Null)', '(分录)单价', '(分录)数量', '(分录)原币金额', 
+    '(分录)供应商#编码', '(分录)供应商#名称(Null)', 
+    '(分录)币别#编码', '(分录)币别#名称', '(分录)汇率类型#编码', '(分录)汇率类型#名称', '(分录)汇率', 
+    '(分录)计量单位#编码', '(分录)计量单位#名称(Null)', '(分录)单价', '(分录)数量', '(分录)原币金额', 
     '(分录)借方金额', '(分录)贷方金额', '(分录)结算方式#编码', '(分录)结算方式#名称(Null)', 
     '(分录)结算号', '(分录)业务单号', '(分录)失效分录行号'
 ]
@@ -178,7 +179,7 @@ if source_file and ratio_file:
         if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
             project_cols = list(proj_text_to_code.keys())
             df_source['待拆分金额_numeric'] = pd.to_numeric(df_source['待拆分金额'], errors='coerce')
-            df_to_split = df_source[df_source['待拆分金额_numeric'].notna() & (df_source['待拆分金额_numeric'] != 0)]
+            df_to_split = df_source[df_source['待拆分金額_numeric'].notna() & (df_source['待拆分金额_numeric'] != 0)]
             
             if df_to_split.empty:
                 st.warning("⚠️ 没有发现金额不为0的有效数字数据行。")
@@ -250,8 +251,11 @@ if source_file and ratio_file:
                     
                     df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                     
-                    # 1. 冲销行：借方负数
+                    # ----------------------------------------------------
+                    # 1. 冲销行：借方填待拆分金额的负数！
+                    # ----------------------------------------------------
                     neg_row = [None] * len(tech_headers)
+                    
                     if entry_idx == 1:
                         for k, v in base_info.items():
                             if k in tech_headers: neg_row[tech_headers.index(k)] = v
@@ -268,13 +272,17 @@ if source_file and ratio_file:
                     for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                         neg_row[tech_headers.index(field)] = base_info[field]
                     
+                    # 冲销行默认进未分配项目段 006
                     if 'FDetailID#FF100002' in tech_headers: neg_row[tech_headers.index('FDetailID#FF100002')] = '006'
+                    # 写入对应的成本中心编码（进 FDetailID#FFlex5 ）
                     if 'FDetailID#FFlex5' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
                     
                     new_rows.append(neg_row)
                     entry_idx += 1
                     
-                    # 2. 分配行：借方正数
+                    # ----------------------------------------------------
+                    # 2. 分配行：借方正数分摊！
+                    # ----------------------------------------------------
                     allocated_sum = 0.0
                     for i, p_row in enumerate(df_valid_proj.itertuples()):
                         is_last = (i == len(df_valid_proj) - 1)
@@ -289,6 +297,7 @@ if source_file and ratio_file:
                         if amt == 0: continue
                         
                         pos_row = [None] * len(tech_headers)
+                        
                         pos_row[tech_headers.index('FEntity')] = entry_idx
                         pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                         pos_row[tech_headers.index('FACCOUNTID')] = sub_code
@@ -301,7 +310,9 @@ if source_file and ratio_file:
                         for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                             pos_row[tech_headers.index(field)] = base_info[field]
                         
+                        # 写入分配到的新项目编码
                         if 'FDetailID#FF100002' in tech_headers: pos_row[tech_headers.index('FDetailID#FF100002')] = p_row.proj_code
+                        # 写入对应的成本中心编码（进 FDetailID#FFlex5 ）
                         if 'FDetailID#FFlex5' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
                         
                         new_rows.append(pos_row)
@@ -316,9 +327,6 @@ if source_file and ratio_file:
                 st.dataframe(final_df.iloc[2:15])
                 
                 output = io.BytesIO()
-                # ----------------------------------------------------
-                # 【核心修改点】完美锁定 Sheet 页命名为金蝶标准
-                # ----------------------------------------------------
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     final_df.to_excel(writer, index=False, header=False, sheet_name='凭证#单据头(FBillHead)')
                 processed_data = output.getvalue()
