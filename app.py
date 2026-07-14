@@ -108,12 +108,11 @@ cn_headers = [
 ]
 
 # ----------------------------------------------------
-# 🔐 侧边栏：【密码锁分流控制器】密码已设为 lina
+# 🔐 侧边栏：【密码锁分流控制器】口令：lina
 # ----------------------------------------------------
 st.sidebar.markdown("### 🚀 财务主控制台")
 access_token = st.sidebar.text_input("请输入私人授权口令：", type="password")
 
-# 只有你输入密码：lina 后，才会把新功能放出来，同事看不到
 if access_token == "lina":
     main_mode = st.sidebar.radio(
         "请选择您要执行的财务模块：",
@@ -316,9 +315,11 @@ def run_reclassification_tool():
             df_ratio = pd.read_excel(ratio_file, skiprows=ratio_header_idx)
             df_ratio.columns = df_ratio.columns.astype(str).str.strip()
             
-            st.success(f"✅ 老功能模块运行正常。定位金额列为: 【{amt_col}】")
+            # 🌟🌟【已修改】更新为您的最新描述表述
+            st.success(f"✅ 文件加载就绪！当前做账主体为: 【{selected_company}】")
             
-            if st.button("🚀 开始老功能计算并导出凭证"):
+            # 🌟🌟【已修改】更新为您的最新按钮文字表述
+            if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
                 project_cols = list(proj_text_to_code.keys())
                 df_source['待拆分金额_numeric'] = pd.to_numeric(df_source[amt_col], errors='coerce')
                 df_to_split = df_source[df_source['待拆分金额_numeric'].notna() & (df_source['待拆分金额_numeric'] != 0)]
