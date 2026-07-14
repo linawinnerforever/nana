@@ -109,7 +109,7 @@ tech_headers = [
     'FBUSNO', 'FEXPORTENTRYID'
 ]
 
-# 严格对照您之前发来的凭证表头.xlsx中第2列中文，字字对齐
+# 严格对照您发来的凭证表头.xlsx中第2列中文，字字对齐
 cn_headers = [
     '*单据头(序号)', '*(单据头)账簿#编码', '(单据头)账簿#名称', '*(单据头)日期', '(单据头)业务日期', 
     '(单据头)会计年度', '(单据头)期间', '*(单据头)凭证字#编码', '(单据头)凭证字#名称', 
@@ -250,12 +250,8 @@ if source_file and ratio_file:
                     
                     df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                     
-                    # ----------------------------------------------------
-                    # 1. 冲销行：借方填待拆分金额的负数！
-                    # ----------------------------------------------------
+                    # 1. 冲销行：借方负数
                     neg_row = [None] * len(tech_headers)
-                    
-                    # 第一行填充单据头 A-R
                     if entry_idx == 1:
                         for k, v in base_info.items():
                             if k in tech_headers: neg_row[tech_headers.index(k)] = v
@@ -265,7 +261,6 @@ if source_file and ratio_file:
                     neg_row[tech_headers.index('FACCOUNTID')] = sub_code
                     neg_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
                     
-                    # 借方负数，贷方与原币留空
                     neg_row[tech_headers.index('FDEBIT')] = -orig_amt
                     neg_row[tech_headers.index('FCREDIT')] = None
                     neg_row[tech_headers.index('FAMOUNTFOR')] = None
@@ -279,9 +274,7 @@ if source_file and ratio_file:
                     new_rows.append(neg_row)
                     entry_idx += 1
                     
-                    # ----------------------------------------------------
-                    # 2. 分配行：借方正数分摊！
-                    # ----------------------------------------------------
+                    # 2. 分配行：借方正数
                     allocated_sum = 0.0
                     for i, p_row in enumerate(df_valid_proj.itertuples()):
                         is_last = (i == len(df_valid_proj) - 1)
@@ -296,14 +289,11 @@ if source_file and ratio_file:
                         if amt == 0: continue
                         
                         pos_row = [None] * len(tech_headers)
-                        
-                        # 后续行单据头 A-R 留空
                         pos_row[tech_headers.index('FEntity')] = entry_idx
                         pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                         pos_row[tech_headers.index('FACCOUNTID')] = sub_code
                         pos_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
                         
-                        # 借方正数，贷方与原币留空
                         pos_row[tech_headers.index('FDEBIT')] = amt
                         pos_row[tech_headers.index('FCREDIT')] = None
                         pos_row[tech_headers.index('FAMOUNTFOR')] = None
@@ -326,8 +316,11 @@ if source_file and ratio_file:
                 st.dataframe(final_df.iloc[2:15])
                 
                 output = io.BytesIO()
+                # ----------------------------------------------------
+                # 【核心修改点】完美锁定 Sheet 页命名为金蝶标准
+                # ----------------------------------------------------
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    final_df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+                    final_df.to_excel(writer, index=False, header=False, sheet_name='凭证#单据头(FBillHead)')
                 processed_data = output.getvalue()
                 
                 st.download_button(
