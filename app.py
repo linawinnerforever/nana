@@ -51,7 +51,7 @@ EMPLOYEE_DEPT_MAP = {
     "Tania": {"dept_code": "2005", "emp_code": "0064"}
 }
 
-# 信用卡商户智能会计策略规则库（严格遵循：只有特定软件、版权、阿里挂供应商，其余不挂）
+# 信用卡商户智能会计策略规则库（严格遵循：只有特定软件挂供应商，其余不挂）
 MERCHANT_RULES = [
     {"keyword": "DEEPL", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
     {"keyword": "ANTHROPIC", "project": "软件使用费-ANTHROPIC", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN02027"},
@@ -176,14 +176,14 @@ def run_credit_card_tool():
             if 'FDetailID#FFlex6' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex6')] = emp_info["dept_code"]
             if 'FDetailID#FFlex4' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
             
-            # 【根据财务真实要求】有供应商代码且属于特定费用时才挂载供应商，其余一律留空
-            if hasattr(p_row, '供应商') and p_row.供应商 and str(p_row.供应商).strip() != "":
+            # 【精确挂载核算】只有有供应商代码，且值非空、不为nan时才挂，否则一律给 None
+            if hasattr(p_row, '供应商') and pd.notna(p_row.供应商) and str(p_row.供应商).strip() != "":
                 if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = str(p_row.供应商).strip()
             else:
                 if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = None
                 
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
-                v_row[tech_headers.index(f)] = base_v_info[f]
+            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                v_row[tech_headers.index(h_field)] = base_v_info[h_field]
             voucher_rows.append(v_row)
             ent_id += 1
             
@@ -194,12 +194,12 @@ def run_credit_card_tool():
             c_row[tech_headers.index('FACCOUNTID')] = "2241.01"
             c_row[tech_headers.index('FCREDIT')] = p_row.金额
             if 'FDetailID#FFlex4' in tech_headers: c_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
-                c_row[tech_headers.index(f)] = base_v_info[f]
+            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                c_row[tech_headers.index(h_field)] = base_v_info[h_field]
             voucher_rows.append(c_row)
             ent_id += 1
             
-        # 3. 追加阿里云特殊计提对冲分录（已修复未定义变量变量报错）
+        # 追加阿里云特殊对冲项
         if ali_amount > 0:
             ali_d = [None] * len(tech_headers)
             ali_d[tech_headers.index('FEntity')] = ent_id
@@ -207,8 +207,8 @@ def run_credit_card_tool():
             ali_d[tech_headers.index('FACCOUNTID')] = ali_debit
             ali_d[tech_headers.index('FDEBIT')] = ali_amount
             if 'FDetailID#FF100005' in tech_headers: ali_d[tech_headers.index('FDetailID#FF100005')] = "VEN00057"
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
-                ali_d[tech_headers.index(f)] = base_v_info[f]
+            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                ali_d[tech_headers.index(h_field)] = base_v_info[h_field]
             voucher_rows.append(ali_d)
             ent_id += 1
             
@@ -218,8 +218,8 @@ def run_credit_card_tool():
             ali_c[tech_headers.index('FACCOUNTID')] = ali_credit
             ali_c[tech_headers.index('FCREDIT')] = ali_amount
             if 'FDetailID#FF100005' in tech_headers: ali_c[tech_headers.index('FDetailID#FF100005')] = "VEN00057"
-            for f in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
-                ali_c[tech_headers.index(f)] = base_v_info[f]
+            for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
+                ali_c[tech_headers.index(h_field)] = base_v_info[h_field]
             voucher_rows.append(ali_c)
             ent_id += 1
             
@@ -256,7 +256,7 @@ def run_credit_card_tool():
                             extracted_tx.append({"期间": f"{current_year}-{str(current_period).zfill(2)}", "持卡人": current_person, "交易日期": tx_date, "原始商户描述": desc.strip(), "金额": charge_val})
             df_tx = pd.DataFrame(extracted_tx)
             
-            # 💡 修复元组解包及供应商判定逻辑
+            # 会计真理规则映射
             def route_accounting(row):
                 desc = str(row['原始商户描述']).upper()
                 project = "未分类支出(请在底稿修改)"
@@ -272,12 +272,23 @@ def run_credit_card_tool():
                         break
                 return project, acct_code, acct_name, vendor
                 
-            # 执行稳定咬合解析与扩展
-            res_apply = df_tx.apply(route_accounting, axis=1, result_type='expand')
-            df_tx['项目'] = res_apply[0]
-            df_tx['科目编码'] = res_apply[1]
-            df_tx['科目名称'] = res_apply[2]
-            df_tx['供应商'] = res_apply[3]
+            # 🌟🌟【终极物理修复】抛弃 apply 的 result_type，改用常规稳健赋值，防断 KeyError: 0
+            projects_list = []
+            codes_list = []
+            names_list = []
+            vendors_list = []
+            
+            for idx, tx_row in df_tx.iterrows():
+                p, c, n, v = route_accounting(tx_row)
+                projects_list.append(p)
+                codes_list.append(c)
+                names_list.append(n)
+                vendors_list.append(v)
+                
+            df_tx['项目'] = projects_list
+            df_tx['科目编码'] = codes_list
+            df_tx['科目名称'] = names_list
+            df_tx['供应商'] = vendors_list
             
             df_pivot = df_tx.groupby(['持卡人', '项目', '科目编码', '科目名称', '供应商'], dropna=False).sum(numeric_only=True).reset_index()
             df_voucher = generate_voucher_dataframe(df_pivot, ali_amt, ali_acct_debit, ali_acct_credit)
@@ -304,7 +315,7 @@ def run_credit_card_tool():
             except Exception as e: st.error(f"处理失败，请确保底稿包含‘透视看板’标签。错误详情: {e}")
 
 # ====================================================
-# 📊 密封舱二：老功能（老少咸宜的集团费用重分类工具）
+# 📊 费用重分类老功能（完全不受干扰）
 # ====================================================
 def run_reclassification_tool():
     st.subheader("📊 费用重分类集团全自动凭证生成板块")
@@ -431,6 +442,7 @@ def run_reclassification_tool():
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer: final_df.to_excel(writer, index=False, header=False, sheet_name='凭证#单据头(FBillHead)')
                     st.download_button(label="📥 下载重分类引入凭证Excel", data=output.getvalue(), file_name=f"金蝶云星空重分类凭证-{selected_company}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e: st.error(f"发生意外错误: {e}")
+
 
 # ----------------------------------------------------
 # 🎛️ 密封舱分流执行网关
