@@ -51,20 +51,20 @@ EMPLOYEE_DEPT_MAP = {
     "Tania": {"dept_code": "2005", "emp_code": "0064"}
 }
 
-# 信用卡商户智能会计策略规则库（严格遵循：只有特定软件挂供应商，其余不挂）
+# 信用卡商户智能会计策略规则库（仅包含特定软件和版权挂供应商，其余不配置供应商字段）
 MERCHANT_RULES = [
-    {"keyword": "DEEPL", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "DEEPL", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
     {"keyword": "ANTHROPIC", "project": "软件使用费-ANTHROPIC", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN02027"},
     {"keyword": "Google CLOUD", "project": "软件使用费-Google Cloud", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN00057"},
-    {"keyword": "GOOGLE *ReelShort", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
-    {"keyword": "GOOGLE *SVCSCRAZYMAPLES", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
-    {"keyword": "ADOBE", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
-    {"keyword": "ZOOM.COM", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
-    {"keyword": "UBER *ONE", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利", "vendor": ""},
-    {"keyword": "OLIVE GARDEN", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利", "vendor": ""},
-    {"keyword": "INTUIT", "project": "软件使用费-Office expense", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""},
+    {"keyword": "GOOGLE *ReelShort", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
+    {"keyword": "GOOGLE *SVCSCRAZYMAPLES", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
+    {"keyword": "ADOBE", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
+    {"keyword": "ZOOM.COM", "project": "订阅类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
+    {"keyword": "UBER *ONE", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利"},
+    {"keyword": "OLIVE GARDEN", "project": "主营成本-员工福利", "acct_code": "6602.01.02.02", "acct_name": "管理费用_职工薪酬_Employee_职工福利"},
+    {"keyword": "INTUIT", "project": "软件使用费-Office expense", "acct_code": "6602.04", "acct_name": "管理费用_办公费"},
     {"keyword": "OPENAI", "project": "软件使用费-OPENAI", "acct_code": "6401.21", "acct_name": "主营业务成本_软件服务费", "vendor": "VEN02277"},
-    {"keyword": "COMPASS", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费", "vendor": ""}
+    {"keyword": "COMPASS", "project": "行政办公类支出", "acct_code": "6602.04", "acct_name": "管理费用_办公费"}
 ]
 
 # 🌟 镜像对齐的 73 列终极金蝶中英文对照表头
@@ -176,11 +176,15 @@ def run_credit_card_tool():
             if 'FDetailID#FFlex6' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex6')] = emp_info["dept_code"]
             if 'FDetailID#FFlex4' in tech_headers: v_row[tech_headers.index('FDetailID#FFlex4')] = emp_info["emp_code"]
             
-            # 【精确挂载核算】只有有供应商代码，且值非空、不为nan时才挂，否则一律给 None
-            if hasattr(p_row, '供应商') and pd.notna(p_row.供应商) and str(p_row.供应商).strip() != "":
-                if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = str(p_row.供应商).strip()
-            else:
-                if 'FDetailID#FF100005' in tech_headers: v_row[tech_headers.index('FDetailID#FF100005')] = None
+            # 【精确挂载供应商维度】严格遵照只有在底稿中带且不为空的供应商才挂载，其他常规费用无视供应商核算
+            v_code = None
+            if hasattr(p_row, '供应商') and pd.notna(p_row.供应商):
+                v_code_str = str(p_row.供应商).strip()
+                if v_code_str != "" and v_code_str.upper() != "NAN":
+                    v_code = v_code_str
+            
+            if 'FDetailID#FF100005' in tech_headers:
+                v_row[tech_headers.index('FDetailID#FF100005')] = v_code
                 
             for h_field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']: 
                 v_row[tech_headers.index(h_field)] = base_v_info[h_field]
@@ -199,7 +203,7 @@ def run_credit_card_tool():
             voucher_rows.append(c_row)
             ent_id += 1
             
-        # 追加阿里云特殊对冲项
+        # 3. 追加外挂阿里云大额特定分录
         if ali_amount > 0:
             ali_d = [None] * len(tech_headers)
             ali_d[tech_headers.index('FEntity')] = ent_id
@@ -256,15 +260,15 @@ def run_credit_card_tool():
                             extracted_tx.append({"期间": f"{current_year}-{str(current_period).zfill(2)}", "持卡人": current_person, "交易日期": tx_date, "原始商户描述": desc.strip(), "金额": charge_val})
             df_tx = pd.DataFrame(extracted_tx)
             
-            # 会计真理规则映射
-            def route_accounting(row):
-                desc = str(row['原始商户描述']).upper()
+            # 规则核心映射器
+            def route_accounting_line(desc_str):
+                desc_upper = str(desc_str).upper()
                 project = "未分类支出(请在底稿修改)"
                 acct_code = "6602.04"
                 acct_name = "管理费用_办公费"
                 vendor = ""
                 for rule in MERCHANT_RULES:
-                    if rule["keyword"].upper() in desc:
+                    if rule["keyword"].upper() in desc_upper:
                         project = rule["project"]
                         acct_code = rule["acct_code"]
                         acct_name = rule["acct_name"]
@@ -272,14 +276,14 @@ def run_credit_card_tool():
                         break
                 return project, acct_code, acct_name, vendor
                 
-            # 🌟🌟【终极物理修复】抛弃 apply 的 result_type，改用常规稳健赋值，防断 KeyError: 0
+            # 🌟🌟【原生循环物理机制】彻底杜绝 Pandas 高版本内部解包抛出的 KeyError 或 ValueError
             projects_list = []
             codes_list = []
             names_list = []
             vendors_list = []
             
             for idx, tx_row in df_tx.iterrows():
-                p, c, n, v = route_accounting(tx_row)
+                p, c, n, v = route_accounting_line(tx_row['原始商户描述'])
                 projects_list.append(p)
                 codes_list.append(c)
                 names_list.append(n)
@@ -290,6 +294,7 @@ def run_credit_card_tool():
             df_tx['科目名称'] = names_list
             df_tx['供应商'] = vendors_list
             
+            # 分组轧平汇总（通过明确传递参数，不容忍任何供应商列 nan 类型歧义）
             df_pivot = df_tx.groupby(['持卡人', '项目', '科目编码', '科目名称', '供应商'], dropna=False).sum(numeric_only=True).reset_index()
             df_voucher = generate_voucher_dataframe(df_pivot, ali_amt, ali_acct_debit, ali_acct_credit)
             
@@ -315,7 +320,7 @@ def run_credit_card_tool():
             except Exception as e: st.error(f"处理失败，请确保底稿包含‘透视看板’标签。错误详情: {e}")
 
 # ====================================================
-# 📊 费用重分类老功能（完全不受干扰）
+# 📊 费用重分类老功能（完全不受干扰，100%镜像对齐您的成功表头）
 # ====================================================
 def run_reclassification_tool():
     st.subheader("📊 费用重分类集团全自动凭证生成板块")
