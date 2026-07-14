@@ -10,27 +10,27 @@ st.set_page_config(page_title="金蝶云星空-集团费重分类全自动工具
 st.title("📊 金蝶云星空 - 费用重分类集团全自动生成凭证工具")
 
 # ----------------------------------------------------
-# 集团 18 大主体真实财务静态配置库
+# 集团 18 大主体真实财务静态配置库（已根据最新版公司主体表修正账簿与组织编码）
 # ----------------------------------------------------
 COMPANY_CONFIG = {
-    "Crazy Maple Studio Inc": {"book_id": "100", "org_id": "002", "currency_id": "PRE007", "currency_name": "美元"},
-    "CRAZY MAPLE  SERVICE  COMPANY": {"book_id": "101", "org_id": "003", "currency_id": "PRE007", "currency_name": "美元"},
-    "Crazy Maple  Canada  Inc": {"book_id": "102", "org_id": "004", "currency_id": "PRE008", "currency_name": "加币"},
-    "Maple House Inc": {"book_id": "103", "org_id": "005", "currency_id": "PRE007", "currency_name": "美元"},
-    "CRAZY MAPLE  INTERACTIVE  HOLDING LTD": {"book_id": "104", "org_id": "006", "currency_id": "PRE007", "currency_name": "美元"},
-    "SPICY MAPLE  LIMITED": {"book_id": "105", "org_id": "007", "currency_id": "PRE007", "currency_name": "美元"},
-    "CRAZY MAPLE  STUDIO  HK LIMITED": {"book_id": "106", "org_id": "008", "currency_id": "PRE002", "currency_name": "香港元"},
-    "New Leaf  Publishing  Inc": {"book_id": "107", "org_id": "009", "currency_id": "PRE007", "currency_name": "美元"},
-    "北京枫悦互动科技有限公司": {"book_id": "108", "org_id": "010", "currency_id": "PRE001", "currency_name": "人民币"},
-    "深圳枫叶互动科技有限公司": {"book_id": "109", "org_id": "011", "currency_id": "PRE001", "currency_name": "人民币"},
-    "杭州枫叶互动科技有限公司": {"book_id": "110", "org_id": "012", "currency_id": "PRE001", "currency_name": "人民币"},
-    "B25 LIMITED": {"book_id": "111", "org_id": "013", "currency_id": "PRE007", "currency_name": "美元"},
-    "海南枫悦互动科技有限公司": {"book_id": "112", "org_id": "014", "currency_id": "PRE001", "currency_name": "人民币"},
-    "北京枫悦互动科技有限公司工会委员会": {"book_id": "113", "org_id": "015", "currency_id": "PRE001", "currency_name": "人民币"},
-    "深圳市星尘游戏科技有限公司": {"book_id": "114", "org_id": "016", "currency_id": "PRE001", "currency_name": "人民币"},
-    "ReelShort Japan Co., Ltd.": {"book_id": "115", "org_id": "017", "currency_id": "PRE004", "currency_name": "日本日圆"},
-    "SWEET MAPLE LIMITED": {"book_id": "116", "org_id": "018", "currency_id": "PRE007", "currency_name": "美元"},
-    "深圳枫悦互动科技有限公司": {"book_id": "117", "org_id": "019", "currency_id": "PRE001", "currency_name": "人民币"}
+    "Crazy Maple Studio Inc": {"book_id": "002", "org_id": "100", "currency_id": "PRE007", "currency_name": "美元"},
+    "CRAZY MAPLE  SERVICE  COMPANY": {"book_id": "003", "org_id": "101", "currency_id": "PRE007", "currency_name": "美元"},
+    "Crazy Maple  Canada  Inc": {"book_id": "004", "org_id": "102", "currency_id": "PRE008", "currency_name": "加币"},
+    "Maple House Inc": {"book_id": "005", "org_id": "103", "currency_id": "PRE007", "currency_name": "美元"},
+    "CRAZY MAPLE  INTERACTIVE  HOLDING LTD": {"book_id": "006", "org_id": "104", "currency_id": "PRE007", "currency_name": "美元"},
+    "SPICY MAPLE  LIMITED": {"book_id": "007", "org_id": "105", "currency_id": "PRE007", "currency_name": "美元"},
+    "CRAZY MAPLE  STUDIO  HK LIMITED": {"book_id": "008", "org_id": "106", "currency_id": "PRE002", "currency_name": "香港元"},
+    "New Leaf  Publishing  Inc": {"book_id": "009", "org_id": "107", "currency_id": "PRE007", "currency_name": "美元"},
+    "北京枫悦互动科技有限公司": {"book_id": "010", "org_id": "108", "currency_id": "PRE001", "currency_name": "人民币"},
+    "深圳枫叶互动科技有限公司": {"book_id": "011", "org_id": "109", "currency_id": "PRE001", "currency_name": "人民币"},
+    "杭州枫叶互动科技有限公司": {"book_id": "012", "org_id": "110", "currency_id": "PRE001", "currency_name": "人民币"},
+    "B25 LIMITED": {"book_id": "013", "org_id": "111", "currency_id": "PRE007", "currency_name": "美元"},
+    "海南枫悦互动科技有限公司": {"book_id": "014", "org_id": "112", "currency_id": "PRE001", "currency_name": "人民币"},
+    "北京枫悦互动科技有限公司工会委员会": {"book_id": "015", "org_id": "113", "currency_id": "PRE001", "currency_name": "人民币"},
+    "深圳市星尘游戏科技有限公司": {"book_id": "016", "org_id": "114", "currency_id": "PRE001", "currency_name": "人民币"},
+    "ReelShort Japan Co., Ltd.": {"book_id": "017", "org_id": "115", "currency_id": "PRE004", "currency_name": "日本日圆"},
+    "SWEET MAPLE LIMITED": {"book_id": "018", "org_id": "116", "currency_id": "PRE007", "currency_name": "美元"},
+    "深圳枫悦互动科技有限公司": {"book_id": "019", "org_id": "117", "currency_id": "PRE001", "currency_name": "人民币"}
 }
 
 # 支持的标准币种字典清单（完全基于官方档案）
@@ -109,7 +109,7 @@ tech_headers = [
     'FBUSNO', 'FEXPORTENTRYID'
 ]
 
-# 【终极修正】严格对照您上传的凭证表头.xlsx中第2列中文，字字对齐
+# 严格对照您之前发来的凭证表头.xlsx中第2列中文，字字对齐
 cn_headers = [
     '*单据头(序号)', '*(单据头)账簿#编码', '(单据头)账簿#名称', '*(单据头)日期', '(单据头)业务日期', 
     '(单据头)会计年度', '(单据头)期间', '*(单据头)凭证字#编码', '(单据头)凭证字#名称', 
@@ -173,7 +173,7 @@ if source_file and ratio_file:
         df_ratio = pd.read_excel(ratio_file, skiprows=ratio_header_idx)
         df_ratio.columns = df_ratio.columns.astype(str).str.strip()
         
-        st.success(f"✅ 文件加载就绪！主体: 【{selected_company}】 | 币别: 【{chosen_currency['name']}】")
+        st.success(f"✅ 文件加载就绪！当前做账主体为: 【{selected_company}】")
         
         if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
             project_cols = list(proj_text_to_code.keys())
@@ -251,7 +251,7 @@ if source_file and ratio_file:
                     df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                     
                     # ----------------------------------------------------
-                    # 1. 冲销行：借方填负数，原待拆分金额取负！
+                    # 1. 冲销行：借方填待拆分金额的负数！
                     # ----------------------------------------------------
                     neg_row = [None] * len(tech_headers)
                     
@@ -280,7 +280,7 @@ if source_file and ratio_file:
                     entry_idx += 1
                     
                     # ----------------------------------------------------
-                    # 2. 分配行：借方填正数，按比例拆分！
+                    # 2. 分配行：借方正数分摊！
                     # ----------------------------------------------------
                     allocated_sum = 0.0
                     for i, p_row in enumerate(df_valid_proj.itertuples()):
