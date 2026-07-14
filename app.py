@@ -10,7 +10,7 @@ st.set_page_config(page_title="金蝶云星空-集团费重分类全自动工具
 st.title("📊 金蝶云星空 - 费用重分类集团全自动生成凭证工具")
 
 # ----------------------------------------------------
-# 集团 18 大主体真实财务静态配置库（已根据最新版公司主体表修正账簿与组织编码）
+# 集团 18 大主体真实财务静态配置库
 # ----------------------------------------------------
 COMPANY_CONFIG = {
     "Crazy Maple Studio Inc": {"book_id": "002", "org_id": "100", "currency_id": "PRE007", "currency_name": "美元"},
@@ -30,10 +30,9 @@ COMPANY_CONFIG = {
     "深圳市星尘游戏科技有限公司": {"book_id": "016", "org_id": "114", "currency_id": "PRE001", "currency_name": "人民币"},
     "ReelShort Japan Co., Ltd.": {"book_id": "017", "org_id": "115", "currency_id": "PRE004", "currency_name": "日本日圆"},
     "SWEET MAPLE LIMITED": {"book_id": "018", "org_id": "116", "currency_id": "PRE007", "currency_name": "美元"},
-    "深圳枫悦互动科技有限公司": {"book_id": "019", "org_id": "117", "currency_id": "PRE001", "currency_name": "人民币"}
+    "深圳枫悦互动科技有限公司": {"book_id": "117", "org_id": "019", "currency_id": "PRE001", "currency_name": "人民币"}
 }
 
-# 支持的标准币种字典清单（完全基于官方档案）
 CURRENCY_OPTIONS = {
     "人民币 (PRE001)": {"id": "PRE001", "name": "人民币"},
     "美元 (PRE007)": {"id": "PRE007", "name": "美元"},
@@ -43,55 +42,41 @@ CURRENCY_OPTIONS = {
 }
 
 # ----------------------------------------------------
-# 侧边栏：多主体与期间控制台
+# 侧边栏控制台
 # ----------------------------------------------------
 st.sidebar.header("🛠️ 集团财务控制台")
 
-# 1. 动态选择公司主体
 company_options = list(COMPANY_CONFIG.keys())
 selected_company = st.sidebar.selectbox("请选择本次做账的公司主体", options=company_options)
-
 comp_info = COMPANY_CONFIG[selected_company]
 st.sidebar.success(f"📍 锁定主体：账簿({comp_info['book_id']}) | 组织({comp_info['org_id']})")
 
-# 2. 动态币别选择框
 default_curr_label = f"{comp_info['currency_name']} ({comp_info['currency_id']})"
 if default_curr_label not in CURRENCY_OPTIONS:
     CURRENCY_OPTIONS[default_curr_label] = {"id": comp_info['currency_id'], "name": comp_info['currency_name']}
 
 curr_labels = list(CURRENCY_OPTIONS.keys())
-selected_curr_label = st.sidebar.selectbox(
-    "请选择记账本位币 (FCURRENCYID)", 
-    options=curr_labels, 
-    index=curr_labels.index(default_curr_label)
-)
+selected_curr_label = st.sidebar.selectbox("请选择记账本位币 (FCURRENCYID)", options=curr_labels, index=curr_labels.index(default_curr_label))
 chosen_currency = CURRENCY_OPTIONS[selected_curr_label]
 
-# 3. 动态选择期间
 current_year = st.sidebar.number_input("会计年度 (FYEAR)", min_value=2020, max_value=2035, value=2026)
 current_period = st.sidebar.slider("会计期间 (FPERIOD)", min_value=1, max_value=12, value=6)
-
-# 自动计算当月最后一天
 last_day = calendar.monthrange(current_year, current_period)[1]
 voucher_date = f"{current_year}-{str(current_period).zfill(2)}-{str(last_day).zfill(2)}"
 st.sidebar.info(f"📅 凭证自动生成日期：{voucher_date}")
 
 # ----------------------------------------------------
-# 主界面：上传框
+# 主界面上传区
 # ----------------------------------------------------
 col1, col2 = st.columns(2)
-
 with col1:
     st.subheader("1. 上传费用明细表 (TB)")
-    source_file = st.file_uploader("支持 .xlsx 格式，需含：科目编码、科目名称、核算维度编码、核算维度名称、待拆分金额", type=["xlsx"], key="src")
-
+    source_file = st.file_uploader("支持 .xlsx 格式", type=["xlsx"], key="src")
 with col2:
     st.subheader("2. 上传部门项目分摊比例表")
-    ratio_file = st.file_uploader("支持 .xlsx 格式，需含：第一行数字编码，第二行文字名称的二维比例矩阵", type=["xlsx"], key="ratio")
+    ratio_file = st.file_uploader("支持 .xlsx 格式", type=["xlsx"], key="ratio")
 
-# ----------------------------------------------------
-# 严格按照凭证表头.xlsx逐字匹配对齐的 73 列中英文矩阵架构
-# ----------------------------------------------------
+# 73列中英文标准矩阵牢牢锁死
 tech_headers = [
     'FBillHead(GL_VOUCHER)', 'FAccountBookID', 'FAccountBookID#Name', 'FDate', 'FBUSDATE', 'FYEAR', 'FPERIOD', 
     'FVOUCHERGROUPID', 'FVOUCHERGROUPID#Name', 'FVOUCHERGROUPNO', 'FATTACHMENTS', 'FISADJUSTVOUCHER', 
@@ -134,20 +119,34 @@ cn_headers = [
 
 if source_file and ratio_file:
     try:
-        # 1. 解析TB费用表
+        # 1. 智能解析TB费用表（升级模糊容错识别）
         src_excel = pd.ExcelFile(source_file)
         valid_src_sheet = src_excel.sheet_names[0]
         tb_header_idx = 0
+        
         for sheet in src_excel.sheet_names:
             df_check = pd.read_excel(source_file, sheet_name=sheet, header=None)
             for idx, row in df_check.iterrows():
-                if "待拆分金额" in row.values:
+                row_strs = [str(v).strip() for v in row.values if pd.notna(v)]
+                # 只要有一行里包含“待拆分”或“金额”相关核心字眼，即视为表头行
+                if any("待拆分" in s or "待拆分金额" in s for s in row_strs):
                     valid_src_sheet = sheet
                     tb_header_idx = idx
                     break
+                    
         df_source = pd.read_excel(source_file, sheet_name=valid_src_sheet, skiprows=tb_header_idx)
         df_source.columns = df_source.columns.astype(str).str.strip()
         
+        # 智能锁定“待拆分金额”列名（容忍用户改名或带空格）
+        amt_col = None
+        for col in df_source.columns:
+            if "待拆分" in col:
+                amt_col = col
+                break
+        if not amt_col:
+            st.error("❌ 在TB明细表中未找到包含‘待拆分金额’的列，请检查表格列名！")
+            st.stop()
+            
         # 2. 解析比例表双表头
         df_ratio_raw = pd.read_excel(ratio_file, header=None)
         ratio_header_idx = 0
@@ -174,17 +173,16 @@ if source_file and ratio_file:
         df_ratio = pd.read_excel(ratio_file, skiprows=ratio_header_idx)
         df_ratio.columns = df_ratio.columns.astype(str).str.strip()
         
-        st.success(f"✅ 文件加载就绪！当前做账主体为: 【{selected_company}】")
+        st.success(f"✅ 费用表表头锁定成功！识别到的金额列为: 【{amt_col}】")
         
         if st.button("🚀 开始全自动重分类并导出金蝶Excel"):
             project_cols = list(proj_text_to_code.keys())
-            df_source['待拆分金额_numeric'] = pd.to_numeric(df_source['待拆分金额'], errors='coerce')
-            df_to_split = df_source[df_source['待拆分金額_numeric'].notna() & (df_source['待拆分金额_numeric'] != 0)]
+            df_source['待拆分金额_numeric'] = pd.to_numeric(df_source[amt_col], errors='coerce')
+            df_to_split = df_source[df_source['待拆分金额_numeric'].notna() & (df_source['待拆分金额_numeric'] != 0)]
             
             if df_to_split.empty:
-                st.warning("⚠️ 没有发现金额不为0的有效数字数据行。")
+                st.warning("⚠️ 没有发现有效数字数据行（或待拆分金额全部为0）。")
             
-            # 基准单据头定义
             base_info = {
                 'FBillHead(GL_VOUCHER)': 1,
                 'FAccountBookID': comp_info['book_id'],
@@ -228,34 +226,24 @@ if source_file and ratio_file:
                     if not cc_code and dim_code in df_ratio['成本中心编号'].astype(str).str.strip().values:
                         cc_code = dim_code
                     
-                    if not cc_code:
-                        continue
+                    if not cc_code: continue
                         
                     ratio_row_data = df_ratio[df_ratio['成本中心编号'].astype(str).str.strip() == cc_code].iloc[0]
-                    
                     valid_projects = []
                     for proj_text in project_cols:
                         val = ratio_row_data[proj_text]
                         try:
                             val_float = float(val)
                             if val_float > 0:
-                                valid_projects.append({
-                                    'proj_text': proj_text, 
-                                    'proj_code': proj_text_to_code[proj_text], 
-                                    'ratio': val_float
-                                })
+                                valid_projects.append({'proj_text': proj_text, 'proj_code': proj_text_to_code[proj_text], 'ratio': val_float})
                         except:
                             pass
                             
                     if not valid_projects: continue
-                    
                     df_valid_proj = pd.DataFrame(valid_projects).sort_values(by='ratio', ascending=False)
                     
-                    # ----------------------------------------------------
-                    # 1. 冲销行：借方填待拆分金额的负数！
-                    # ----------------------------------------------------
+                    # 1. 冲销行：借方填待拆分金额的负数
                     neg_row = [None] * len(tech_headers)
-                    
                     if entry_idx == 1:
                         for k, v in base_info.items():
                             if k in tech_headers: neg_row[tech_headers.index(k)] = v
@@ -264,7 +252,6 @@ if source_file and ratio_file:
                     neg_row[tech_headers.index('FEXPLANATION')] = f"重分类-冲原公摊-{sub_name}"
                     neg_row[tech_headers.index('FACCOUNTID')] = sub_code
                     neg_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
-                    
                     neg_row[tech_headers.index('FDEBIT')] = -orig_amt
                     neg_row[tech_headers.index('FCREDIT')] = None
                     neg_row[tech_headers.index('FAMOUNTFOR')] = None
@@ -272,17 +259,13 @@ if source_file and ratio_file:
                     for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                         neg_row[tech_headers.index(field)] = base_info[field]
                     
-                    # 冲销行默认进未分配项目段 006
                     if 'FDetailID#FF100002' in tech_headers: neg_row[tech_headers.index('FDetailID#FF100002')] = '006'
-                    # 写入对应的成本中心编码（进 FDetailID#FFlex5 ）
                     if 'FDetailID#FFlex5' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
                     
                     new_rows.append(neg_row)
                     entry_idx += 1
                     
-                    # ----------------------------------------------------
-                    # 2. 分配行：借方正数分摊！
-                    # ----------------------------------------------------
+                    # 2. 分配行：借方正数
                     allocated_sum = 0.0
                     for i, p_row in enumerate(df_valid_proj.itertuples()):
                         is_last = (i == len(df_valid_proj) - 1)
@@ -297,12 +280,10 @@ if source_file and ratio_file:
                         if amt == 0: continue
                         
                         pos_row = [None] * len(tech_headers)
-                        
                         pos_row[tech_headers.index('FEntity')] = entry_idx
                         pos_row[tech_headers.index('FEXPLANATION')] = f"重分类-项目分摊-{sub_name}"
                         pos_row[tech_headers.index('FACCOUNTID')] = sub_code
                         pos_row[tech_headers.index('FACCOUNTID#Name')] = sub_name
-                        
                         pos_row[tech_headers.index('FDEBIT')] = amt
                         pos_row[tech_headers.index('FCREDIT')] = None
                         pos_row[tech_headers.index('FAMOUNTFOR')] = None
@@ -310,20 +291,17 @@ if source_file and ratio_file:
                         for field in ['FCURRENCYID', 'FCURRENCYID#Name', 'FEXCHANGERATETYPE', 'FEXCHANGERATETYPE#Name', 'FEXCHANGERATE']:
                             pos_row[tech_headers.index(field)] = base_info[field]
                         
-                        # 写入分配到的新项目编码
                         if 'FDetailID#FF100002' in tech_headers: pos_row[tech_headers.index('FDetailID#FF100002')] = p_row.proj_code
-                        # 写入对应的成本中心编码（进 FDetailID#FFlex5 ）
                         if 'FDetailID#FFlex5' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
                         
                         new_rows.append(pos_row)
                         entry_idx += 1
-                        
                 except:
                     pass
             
             if new_rows:
                 final_df = pd.DataFrame([tech_headers, cn_headers] + new_rows)
-                st.success(f"🎉 成功生成 【{selected_company}】 借方内部重分类凭证！")
+                st.success(f"🎉 成功生成凭证！")
                 st.dataframe(final_df.iloc[2:15])
                 
                 output = io.BytesIO()
