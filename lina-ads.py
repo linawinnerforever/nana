@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V18")
-st.markdown("特性：MaxDrama 已修正为 NL 主体。透视表已集成金蝶映射，且已遵照最新指示：**NL 主体的行无需匹配金蝶核心字段**。")
+st.title("📊 投放费用月度数据汇总与透视工具 V19")
+st.markdown("特性：完美修复了 Python 3.14 环境下 PyArrow 字符串单元格赋值引发的 TypeError 报错。**NL 主体的行已自动豁免匹配，金蝶字段保持留空**。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -162,52 +162,75 @@ if uploaded_files:
             lambda r: str(r['开户方']).strip() if str(r['开户方']).strip() != "" else str(r['投放渠道']).strip(), axis=1
         )
         
+        # 统一转为标准明文原生 Object 类别，彻底免疫 PyArrow 内存类型设置错误
         df_pivot['项目'] = ""
         df_pivot['供应商-金蝶'] = ""
         df_pivot['供应商编码'] = ""
+        df_pivot = df_pivot.astype({'项目': 'object', '供应商-金蝶': 'object', '供应商编码': 'object'})
         
-        # 字段规则 2: 开始与 MP 矩阵进行映射匹配 (增加 NL 主体豁免匹配逻辑)
+        # 字段规则 2: 开始与 MP 矩阵进行安全整列批量字典映射匹配
         if df_mp_matrix is not None:
-            # 建立低敏感防错映射索引词典
-            mp_channels = df_mp_matrix.set_index(df_mp_matrix.iloc[:, 10].astype(str).str.lower().str.strip()) # 第11列为“渠道”
-            mp_products = df_mp_matrix.set_index(df_mp_matrix.iloc[:, 13].astype(str).str.lower().str.strip()) # 第14列为“核算维度”
+            # 构建标准大小写防空匹配字典
+            # 1. 项目字典 (核算维度 -> 核算编码)
+            dict_project = {}
+            for _, r in df_mp_matrix.iterrows():
+                k_prod = str(r.iloc[13]).strip().lower() # 第14列
+                v_code = str(r.iloc[14]).strip()        # 第15列
+                if k_prod and k_prod != 'nan':
+                    dict_project[k_prod] = v_code
             
+            # 2. CM 组织字典 (渠道 -> 名称/编码)
+            dict_cm_name = {}
+            dict_cm_code = {}
+            # 3. MH 组织字典 (渠道 -> 名称/编码)
+            dict_mh_name = {}
+            dict_mh_code = {}
+            
+            for _, r in df_mp_matrix.iterrows():
+                k_chan = str(r.iloc[10]).strip().lower() # 第11列为“渠道”
+                if k_chan and k_chan != 'nan':
+                    dict_cm_code[k_chan] = str(r.iloc[0]).strip()  # 第1列 CM编码
+                    dict_cm_name[k_chan] = str(r.iloc[2]).strip()  # 第3列 CM名称
+                    dict_mh_code[k_chan] = str(r.iloc[5]).strip()  # 第6列 MH编码
+                    dict_mh_name[k_chan] = str(r.iloc[7]).strip()  # 第8列 MH名称
+
+            # 采用全列安全矢量化映射，速度更快且绝不产生行锁报错
+            p_chan_lower = df_pivot['供应商-渠道'].astype(str).str.strip().str.lower()
+            p_prod_lower = df_pivot['买量产品'].astype(str).str.strip().str.lower()
+            
+            # 先统一做全量字典数据预填入
+            mapped_project = p_prod_lower.map(dict_project).fillna("")
+            
+            mapped_cm_name = p_chan_lower.map(dict_cm_name).fillna("")
+            mapped_cm_code = p_chan_lower.map(dict_cm_code).fillna("")
+            mapped_mh_name = p_chan_lower.map(dict_mh_name).fillna("")
+            mapped_mh_code = p_chan_lower.map(dict_mh_code).fillna("")
+            
+            # 根据核算主体条件进行财务选择性赋值
             for idx, row in df_pivot.iterrows():
-                p_entity = str(row['核算主体']).upper().strip()
+                entity = str(row['核算主体']).upper().strip()
                 
-                # 财务补充逻辑：如果当前行为 NL 主体，直接跳过不作任何匹配，金蝶字段保持留空白！
-                if p_entity == 'NL':
+                # 遵照最新修改指示：如果是 NL 主体，无需匹配入账，金蝶核心字段直接保持空字符串
+                if entity == 'NL':
                     continue
-                    
-                p_chan = str(row['供应商-渠道']).lower().strip()
-                p_prod = str(row['买量产品']).lower().strip()
                 
-                # A. 匹配【项目】
-                if p_prod in mp_products.index:
-                    matched_prod_row = mp_products.loc[p_prod]
-                    if isinstance(matched_prod_row, pd.DataFrame):
-                        matched_prod_row = matched_prod_row.iloc[0]
-                    df_pivot.at[idx, '项目'] = matched_prod_row.iloc[14] # 第15列为“核算编码”
+                # 赋值项目
+                df_pivot.at[idx, '项目'] = mapped_project.iloc[idx]
                 
-                # B. 匹配【供应商-金蝶】与【供应商编码】
-                if p_chan in mp_channels.index:
-                    matched_chan_row = mp_channels.loc[p_chan]
-                    if isinstance(matched_chan_row, pd.DataFrame):
-                        matched_chan_row = matched_chan_row.iloc[0]
-                    
-                    if p_entity == 'CM':
-                        df_pivot.at[idx, '供应商-金蝶'] = matched_chan_row.iloc[2] # 左侧CM名称
-                        df_pivot.at[idx, '供应商编码'] = matched_chan_row.iloc[0] # 左侧CM编码
-                    elif p_entity == 'MH':
-                        df_pivot.at[idx, '供应商-金蝶'] = matched_chan_row.iloc[7] # 右侧MH名称
-                        df_pivot.at[idx, '供应商编码'] = matched_chan_row.iloc[5] # 右侧MH编码
+                # 分主体赋值供应商名称与编码
+                if entity == 'CM':
+                    df_pivot.at[idx, '供应商-金蝶'] = mapped_cm_name.iloc[idx]
+                    df_pivot.at[idx, '供应商编码'] = mapped_cm_code.iloc[idx]
+                elif entity == 'MH':
+                    df_pivot.at[idx, '供应商-金蝶'] = mapped_mh_name.iloc[idx]
+                    df_pivot.at[idx, '供应商编码'] = mapped_mh_code.iloc[idx]
                         
         # 规范化列名顺序
         pivot_cols = ['买量产品', '核算主体', 'spent', '投放渠道', '开户方', '项目', '供应商-渠道', '供应商-金蝶', '供应商编码']
         df_pivot = df_pivot[pivot_cols]
         
         # ==========================================
-        # 按钮一：原有常规业务分析总表 (已修复并加上NL过滤规则)
+        # 按钮一：原有常规业务分析总表 (已全面修复底层兼容)
         # ==========================================
         wb_orig = openpyxl.Workbook()
         ws_orig = wb_orig.active
@@ -336,7 +359,7 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：【给领导的汇总表】固定 6 页多 Sheet 纯流水 (结构完全不受扰乱)
+        # 按钮二：【给领导的汇总表】固定 6 页多 Sheet 纯流水 
         # ==========================================
         wb_leader = openpyxl.Workbook()
         wb_leader.remove(wb_leader.active)
@@ -375,7 +398,6 @@ if uploaded_files:
                 
             data_end_row = max(4, len(df_l_final) + 3)
             
-            # 只有 Chapters 页面顶部挂大盘总计 TTL 公式
             if sheet_name == 'Advertising-Chapters':
                 ws_l.cell(row=1, column=5, value="TTL:").font = font_l_hdr
                 ws_l.cell(row=1, column=5).alignment = align_right
@@ -384,7 +406,6 @@ if uploaded_files:
                 ws_l.cell(row=1, column=6).number_format = '#,##0.00'
                 ws_l.cell(row=1, column=6).alignment = align_right
             
-            # 各工作表分组合计公式悬挂
             ws_l.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_l_top_sub
             ws_l.cell(row=1, column=7).number_format = '#,##0.00'
             ws_l.cell(row=1, column=7).alignment = align_right
@@ -393,7 +414,6 @@ if uploaded_files:
             ws_l.cell(row=1, column=9).number_format = '#,##0.00'
             ws_l.cell(row=1, column=9).alignment = align_right
             
-            # 填入中文表头
             for idx, h_name in enumerate(leader_headers, 1):
                 cell = ws_l.cell(row=3, column=idx, value=h_name)
                 cell.font = font_l_hdr
@@ -401,7 +421,6 @@ if uploaded_files:
                 cell.border = leader_thin_border
             ws_l.row_dimensions[3].height = 24
             
-            # 录入数据明细
             for r_idx, row in enumerate(dataframe_to_rows(df_l_final, index=False, header=False), start=4):
                 for c_idx, val in enumerate(row, start=1):
                     cell = ws_l.cell(row=r_idx, column=c_idx, value=val)
@@ -425,14 +444,14 @@ if uploaded_files:
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
-        # 页面双端按钮下载布局
+        # UI 展现与双通道按钮下载
         st.markdown("---")
         if not mp_file:
             st.warning("⚠️ 提示：您尚未上传 MP 数据映射表，右侧常规分析表中的金蝶映射字段将暂时显示为空白。若需生成带编码的分析表，请在右上角上传 MP 表后再点击下载。")
             
         col1, col2 = st.columns(2)
         with col1:
-            st.info(f"📊 2026年{month_label}投放费用计提表 (含金蝶金蝶匹配，已自动过滤NL主体)")
+            st.info(f"📊 2026年{month_label}投放费用计提表 (常规业务页，NL 主体已自动留空无需匹配)")
             st.download_button(
                 label="点击下载新样式 Excel 报表",
                 data=excel_data_orig,
