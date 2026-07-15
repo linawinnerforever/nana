@@ -8,18 +8,19 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V12")
-st.markdown("特性：右侧领导汇总表已升级为**多Sheet（按产品分流）**结构，且『期间』列已实现通过文件名智能解析自动填满。")
+st.title("📊 投放费用月度数据汇总与透视工具 V13")
+st.markdown("特性：领导汇总表已完全固定 6 个产品 Sheet 结构（无数据也保留空表头），并在 Chapters 页顶挂载全产品大盘总消耗公式。")
 
 uploaded_files = st.file_uploader("上传业务计提表 (可多选 Excel 文件)", type=["xlsx", "xls"], accept_multiple_files=True)
 
-PRODUCT_MAPPING = {
-    'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
-    'kiss': {'product': 'KISS', 'entity': 'MH'},
-    'maxdrama': {'product': 'MaxDrama', 'entity': 'CM'},
-    'merge': {'product': 'Merge', 'entity': 'CM'},
-    'reelshort': {'product': 'Reelshort', 'entity': 'NL'},
-    'rsnovel': {'product': 'RS N', 'entity': 'NL'}
+# 严格锁定领导汇总表的 6 个标准工作表名称与其关键字映射
+REQUIRED_SHEETS = {
+    'Advertising-Chapters': {'key': 'chapters', 'product': 'CHAPTERS', 'entity': 'CM'},
+    'Advertising-Kiss': {'key': 'kiss', 'product': 'KISS', 'entity': 'MH'},
+    'Advertising-MaxDrama': {'key': 'maxdrama', 'product': 'MaxDrama', 'entity': 'CM'},
+    'Advertising-Merge': {'key': 'merge', 'product': 'Merge', 'entity': 'CM'},
+    'Advertising-Reelshort': {'key': 'reelshort', 'product': 'Reelshort', 'entity': 'NL'},
+    'Advertising-RS N': {'key': 'rsnovel', 'product': 'RS N', 'entity': 'NL'}
 }
 
 def clean_amount(val):
@@ -36,7 +37,7 @@ def process_data(files):
     all_data = []
     detected_period = "未知期间"
     
-    # 从任意上传的业务文件名中识别类似 "2026年5月" 或 "5月" 字段
+    # 动态抓取上传的任何计提表文件名中的月份
     for f in files:
         match = re.search(r'(\d+年\d+月|\d+月)', f.name)
         if match:
@@ -44,7 +45,7 @@ def process_data(files):
             if "年" in raw_month:
                 year_part = raw_month.split("年")[0][-2:]
                 month_part = raw_month.split("年")[1]
-                detected_period = f"{month_part}-{year_part}" # 例如 5月-26
+                detected_period = f"{month_part}-{year_part}" 
             else:
                 detected_period = f"{raw_month}-26"
             break
@@ -52,9 +53,13 @@ def process_data(files):
     for f in files:
         fname = f.name.lower()
         prod_info = None
-        for key, val in PRODUCT_MAPPING.items():
-            if key in fname:
-                prod_info = val
+        target_sheet_name = None
+        
+        # 匹配该底表属于哪个标准领导工作表
+        for s_name, info in REQUIRED_SHEETS.items():
+            if info['key'] in fname:
+                prod_info = info
+                target_sheet_name = s_name
                 break
         if not prod_info:
             continue
@@ -81,10 +86,7 @@ def process_data(files):
             df = df[~df[channel_col].astype(str).str.contains('合计|Total', na=False)]
             
             processed_df = pd.DataFrame()
-            
-            # 自动把通过文件名动态拿到的『期间』填满这一列，绝不留白！
             processed_df['期间'] = detected_period
-            
             processed_df['投放渠道'] = df['投放渠道'].fillna('').astype(str).str.strip()
             
             if '开户方' in df.columns:
@@ -104,6 +106,7 @@ def process_data(files):
             
             processed_df['买量产品'] = prod_info['product']
             processed_df['核算主体'] = prod_info['entity']
+            processed_df['Target_Sheet'] = target_sheet_name
             
             all_data.append(processed_df)
         except Exception as e:
@@ -115,14 +118,14 @@ def process_data(files):
     return None, detected_period
 
 if uploaded_files:
-    with st.spinner("正在处理多产品分流汇总..."):
+    with st.spinner("正在处理多产品固定格式汇总..."):
         df_detail, current_month = process_data(uploaded_files)
         
     if df_detail is not None:
-        st.success(f"🎉 成功从底表文件名动态识别并填补『期间』为：【{current_month}】")
+        st.success(f"🎉 期间成功识别并同步至所有工作簿：【{current_month}】")
         
         # ==========================================
-        # 按钮一：原有业务总表逻辑（保持原样式完全不动）
+        # 按钮一：原有常规业务分析总表（完全不动）
         # ==========================================
         df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['消耗'].sum()
         df_pivot.rename(columns={'开户服务商': '开户方', '消耗': 'spent'}, inplace=True)
@@ -250,16 +253,17 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：【给领导的汇总表】克隆原厂格式 + 多 Sheet 分流
+        # 按钮二：【给领导的汇总表】按产品分固定 Sheet + 大盘总计公式
         # ==========================================
         wb_leader = openpyxl.Workbook()
-        # 移除默认创建的空第一个Sheet
-        default_sheet = wb_leader.active
-        wb_leader.remove(default_sheet)
+        # 清空工作簿内默认创建的空白工作表
+        wb_leader.remove(wb_leader.active)
         
-        font_leader_hdr = Font(name="微软雅黑", size=10, bold=True)
-        font_leader_body = Font(name="微软雅黑", size=10)
-        font_leader_top = Font(name="Arial", size=11, bold=True)
+        font_l_hdr = Font(name="微软雅黑", size=10, bold=True)
+        font_l_body = Font(name="微软雅黑", size=10)
+        font_l_top_sub = Font(name="Arial", size=11, bold=True)
+        # 大盘总计加重标记高亮
+        font_l_grand_total = Font(name="Arial", size=11, bold=True, color="FF0000") 
         
         align_center = Alignment(horizontal="center", vertical="center")
         align_right = Alignment(horizontal="right", vertical="center")
@@ -271,47 +275,71 @@ if uploaded_files:
         
         leader_headers = ["期间", "投放渠道", "开户服务商", "广告户名", "类别", "代投服务商", "消耗", "代投费", "投放待结算", "买量产品", "核算主体"]
         
-        # 按照“买量产品”分流，每个产品单独建立一个页面 Sheet
-        for product_name, df_sub in df_detail.groupby('买量产品'):
-            # 创建单独产品的 Sheet
-            ws_l = wb_leader.create_sheet(title=product_name)
+        # 强制遍历 6 个要求的标准 Sheet 名称列表
+        for sheet_name in REQUIRED_SHEETS.keys():
+            ws_l = wb_leader.create_sheet(title=sheet_name)
             ws_l.views.sheetView[0].showGridLines = True
             
-            df_l_final = df_sub[leader_headers].copy()
-            data_end_row = len(df_l_final) + 3
+            # 从合并的大 DF 中筛选出符合当前 Sheet 的数据
+            df_sub = df_detail[df_detail['Target_Sheet'] == sheet_name] if 'Target_Sheet' in df_detail.columns else pd.DataFrame()
             
-            # Row 1: 完全克隆原厂格式，在第1行悬挂该产品下的 SUM 总和公式
-            ws_l.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_leader_top
+            # 如果当月该产品没有任何数据 (例如未上传的 Merge)，则生成只有一行空表头和特定期间的骨架
+            if df_sub.empty:
+                df_l_final = pd.DataFrame(columns=leader_headers)
+                # 依然需要提供一条带期间和核算主体的空白行作为表头容器
+                empty_row = {h: "" for h in leader_headers}
+                empty_row['期间'] = current_month
+                empty_row['买量产品'] = REQUIRED_SHEETS[sheet_name]['product']
+                empty_row['核算主体'] = REQUIRED_SHEETS[sheet_name]['entity']
+                df_l_final = pd.DataFrame([empty_row])
+            else:
+                df_l_final = df_sub[leader_headers].copy()
+                
+            data_end_row = max(4, len(df_l_final) + 3)
+            
+            # 【核心逻辑】：在第一个产品（Advertising-Chapters）顶部加装大盘总消耗合计
+            if sheet_name == 'Advertising-Chapters':
+                ws_l.cell(row=1, column=5, value="🌎 全产品大盘总消耗合计:").font = font_l_hdr
+                ws_l.cell(row=1, column=5).alignment = align_right
+                
+                # 使用 Excel 的 3D 跨 Sheet 连续区域求和公式，自动累加从 Chapters 到 RS N 所有的 G4 起的数据
+                ws_l.cell(row=1, column=6, value=f"=SUM('Advertising-Chapters:Advertising-RS N'!G4:G5000)").font = font_l_grand_total
+                ws_l.cell(row=1, column=6).number_format = '#,##0.00'
+                ws_l.cell(row=1, column=6).alignment = align_right
+            
+            # 本页单产品的局部金额汇总公式挂载（第1行 G 列与 I 列）
+            ws_l.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_l_top_sub
             ws_l.cell(row=1, column=7).number_format = '#,##0.00'
             ws_l.cell(row=1, column=7).alignment = align_right
             
-            ws_l.cell(row=1, column=9, value=f"=SUM(I4:I{data_end_row})").font = font_leader_top
+            ws_l.cell(row=1, column=9, value=f"=SUM(I4:I{data_end_row})").font = font_l_top_sub
             ws_l.cell(row=1, column=9).number_format = '#,##0.00'
             ws_l.cell(row=1, column=9).alignment = align_right
             
-            # Row 3: 中文标头行
+            # Row 3: 标准原装中文表头写入
             for idx, h_name in enumerate(leader_headers, 1):
                 cell = ws_l.cell(row=3, column=idx, value=h_name)
-                cell.font = font_leader_hdr
+                cell.font = font_l_hdr
                 cell.alignment = align_center
                 cell.border = leader_thin_border
             ws_l.row_dimensions[3].height = 24
             
-            # Row 4 起：循环填入当前产品的所有流水数据
+            # Row 4 起：循环填入数据
             for r_idx, row in enumerate(dataframe_to_rows(df_l_final, index=False, header=False), start=4):
                 for c_idx, val in enumerate(row, start=1):
                     cell = ws_l.cell(row=r_idx, column=c_idx, value=val)
-                    cell.font = font_leader_body
+                    cell.font = font_l_body
                     cell.border = leader_thin_border
                     
                     if leader_headers[c_idx-1] in ["消耗", "代投费", "投放待结算"]:
-                        cell.number_format = '#,##0.00'
+                        if val != "":
+                            cell.number_format = '#,##0.00'
                         cell.alignment = align_right
                     else:
                         cell.alignment = align_center
                 ws_l.row_dimensions[r_idx].height = 20
                 
-            # 自动调整当前工作表的列宽
+            # 智能调整列宽
             for col in ws_l.columns:
                 max_len = max(len(str(cell.value or '')) for cell in col)
                 col_letter = openpyxl.utils.get_column_letter(col[0].column)
@@ -321,12 +349,12 @@ if uploaded_files:
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
-        # 页面双端按钮下载渲染
+        # 页面底端大纽扣双向分流下载
         st.markdown("---")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.info("📊 常规业务分析总表")
+            st.info("📊 常规业务分析汇总表 (保留旧样式明细/透视)")
             st.download_button(
                 label="点击下载新样式 Excel 报表",
                 data=excel_data_orig,
@@ -335,7 +363,7 @@ if uploaded_files:
             )
             
         with col2:
-            st.success("👑 给领导的汇总表 (已实现按产品分Sheet + 期间自动填充)")
+            st.success("👑 给领导的汇总表 (固定多Sheet + Chapters顶置大盘大总计)")
             st.download_button(
                 label="点击下载给领导的汇总表",
                 data=excel_data_leader,
