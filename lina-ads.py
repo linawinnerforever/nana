@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V14")
-st.markdown("更新日志：修复了其他 Sheet 期间列未填充的问题。将全产品总消耗标签改为了『TTL:』。")
+st.title("📊 投放费用月度数据汇总与透视工具 V15")
+st.markdown("特性：已修复老按钮中的 ws 变量引用错误。大盘总消耗改名为『TTL:』，且多 Sheet 期间已全量刷满。")
 
 uploaded_files = st.file_uploader("上传业务计提表 (可多选 Excel 文件)", type=["xlsx", "xls"], accept_multiple_files=True)
 
@@ -85,7 +85,6 @@ def process_data(files):
             df = df[~df[channel_col].astype(str).str.contains('合计|Total', na=False)]
             
             processed_df = pd.DataFrame()
-            # 确保上传了数据的文件，期间也能被强制刷新为抓取到的正确月份
             processed_df['期间'] = detected_period
             processed_df['投放渠道'] = df['投放渠道'].fillna('').astype(str).str.strip()
             
@@ -122,10 +121,10 @@ if uploaded_files:
         df_detail, current_month = process_data(uploaded_files)
         
     if df_detail is not None:
-        st.success(f"🎉 期间成功识别并应用至所有 Sheet 列：【{current_month}】")
+        st.success(f"🎉 期间已全量动态自动刷新为：【{current_month}】")
         
         # ==========================================
-        # 按钮一：原有常规业务分析总表（完全不动）
+        # 按钮一：原有常规业务分析总表（已修复 ws 变量引用报错）
         # ==========================================
         df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['消耗'].sum()
         df_pivot.rename(columns={'开户服务商': '开户方', '消耗': 'spent'}, inplace=True)
@@ -197,7 +196,7 @@ if uploaded_files:
         ws_orig["A2"].alignment = Alignment(horizontal="center", vertical="center")
         
         ws_orig.merge_cells("H2:L2")
-        ws["H2"] = "投放费用透视表"
+        ws_orig["H2"] = "投放费用透视表"  # 此处已从 ws 修改修复为 ws_orig 
         ws_orig["H2"].font = font_title
         ws_orig["H2"].fill = fill_pivot_title
         ws_orig["H2"].alignment = Alignment(horizontal="center", vertical="center")
@@ -253,10 +252,10 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：【给领导的汇总表】按产品分固定 Sheet + TTL大盘总计
+        # 按钮二：【给领导的汇总表】按产品分固定 6 个 Sheet + 填充期间 + TTL
         # ==========================================
         wb_leader = openpyxl.Workbook()
-        wb_leader.remove(wb_leader.active) # 清理空默认页
+        wb_leader.remove(wb_leader.active) # 清理空白页
         
         font_l_hdr = Font(name="微软雅黑", size=10, bold=True)
         font_l_body = Font(name="微软雅黑", size=10)
@@ -279,7 +278,7 @@ if uploaded_files:
             
             df_sub = df_detail[df_detail['Target_Sheet'] == sheet_name] if 'Target_Sheet' in df_detail.columns else pd.DataFrame()
             
-            # 空数据骨架生成（例如未上传的 Merge）
+            # 无论是否有数据，此处期间列统一重新洗牌刷满当前月份，绝不空置！
             if df_sub.empty:
                 df_l_final = pd.DataFrame(columns=leader_headers)
                 empty_row = {h: "" for h in leader_headers}
@@ -289,22 +288,20 @@ if uploaded_files:
                 df_l_final = pd.DataFrame([empty_row])
             else:
                 df_l_final = df_sub[leader_headers].copy()
-                # 修复核心点：确保所有有数据行的『期间』也被完全重写，防止解析中途出现遗漏
                 df_l_final['期间'] = current_month
                 
             data_end_row = max(4, len(df_l_final) + 3)
             
-            # 【根据要求修改】：顶级大盘标签改为 TTL:
+            # 第 1 页 Chapters 顶置大盘大总计公式，文案修改为 TTL:
             if sheet_name == 'Advertising-Chapters':
                 ws_l.cell(row=1, column=5, value="TTL:").font = font_l_hdr
                 ws_l.cell(row=1, column=5).alignment = align_right
                 
-                # 跨工作表大盘求和公式
                 ws_l.cell(row=1, column=6, value=f"=SUM('Advertising-Chapters:Advertising-RS N'!G4:G5000)").font = font_l_grand_total
                 ws_l.cell(row=1, column=6).number_format = '#,##0.00'
                 ws_l.cell(row=1, column=6).alignment = align_right
             
-            # 当前页单品局部的公式合计挂载
+            # 当前页各分工作表的局部动态总和公式
             ws_l.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_l_top_sub
             ws_l.cell(row=1, column=7).number_format = '#,##0.00'
             ws_l.cell(row=1, column=7).alignment = align_right
@@ -313,7 +310,7 @@ if uploaded_files:
             ws_l.cell(row=1, column=9).number_format = '#,##0.00'
             ws_l.cell(row=1, column=9).alignment = align_right
             
-            # 写入中文行表头
+            # 表头渲染
             for idx, h_name in enumerate(leader_headers, 1):
                 cell = ws_l.cell(row=3, column=idx, value=h_name)
                 cell.font = font_l_hdr
@@ -321,7 +318,7 @@ if uploaded_files:
                 cell.border = leader_thin_border
             ws_l.row_dimensions[3].height = 24
             
-            # 数据循环录入
+            # 数据内容渲染
             for r_idx, row in enumerate(dataframe_to_rows(df_l_final, index=False, header=False), start=4):
                 for c_idx, val in enumerate(row, start=1):
                     cell = ws_l.cell(row=r_idx, column=c_idx, value=val)
@@ -336,7 +333,7 @@ if uploaded_files:
                         cell.alignment = align_center
                 ws_l.row_dimensions[r_idx].height = 20
                 
-            # 智能宽度自适应调节
+            # 自动调整列宽
             for col in ws_l.columns:
                 max_len = max(len(str(cell.value or '')) for cell in col)
                 col_letter = openpyxl.utils.get_column_letter(col[0].column)
@@ -346,24 +343,8 @@ if uploaded_files:
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
-        # 页面底部大纽扣双向分流下载
+        # UI端按钮布局呈现
         st.markdown("---")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.info("📊 常规业务分析汇总表 (保留旧样式明细/透视)")
-            st.download_button(
-                label="点击下载新样式 Excel 报表",
-                data=excel_data_orig,
-                file_name=f"🤝投放费用汇总_对齐美化版_{current_month}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-        with col2:
-            st.success("👑 给领导的汇总表 (固定多Sheet + Chapters顶置 TTL 公式)")
-            st.download_button(
-                label="点击下载给领导的汇总表",
-                data=excel_data_leader,
-                file_name=f"推广费用-各主体情况汇总_{current_month}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
