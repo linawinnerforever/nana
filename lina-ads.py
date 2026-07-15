@@ -8,10 +8,10 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V28 (金蝶凭证一键一账版)")
-st.markdown("特性：**已集成 CM 和 MH 主体金蝶标准上传凭证的自动分录与导出功能！** 智能防漏账、一借一贷自动生成。")
+st.title("📊 投放费用月度数据汇总与透视工具 V29 (金蝶完美凭证版)")
+st.markdown("特性：**金蝶标准上传凭证已完全遵循 6 大硬核财务规范。** 支持摘要动态拼接、空置行留白及 7000 维度精准挂载。")
 
-# 提供文件上传器
+# 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
 with col_u1:
     uploaded_files = st.file_uploader("1. 上传业务计提表 (可多选 Excel)", type=["xlsx", "xls"], accept_multiple_files=True)
@@ -56,87 +56,128 @@ def load_mp_matrix(file):
         st.error(f"解析 MP 映射表失败: {str(e)}")
         return None
 
-def build_jindie_voucher(df_source, entity_name, month_str, year_str):
-    """根据财务借贷规则构建标准的金蝶凭证拉平 Dataframe"""
-    # 筛选对应主体的有效金蝶数据 (剔除未成功匹配供应商名称/编码的行)
-    df_filter = df_source[(df_source['核算主体'] == entity_name) & (df_source['供应商-金蝶'] != "") & (df_source['供应商编码'] != "")].copy()
+def build_jindie_voucher_strict(df_source, entity_name, month_str):
+    """根据最新 6 项要求构建完全一致的金蝶底层拉平凭证表"""
+    # 过滤出对应主体且有供应商映射的行
+    df_filter = df_source[(df_source['核算主体'] == entity_name) & (df_source['供应商-金蝶'] != "")].copy()
     
-    rows = []
-    # 账簿组织字典映射
-    org_id = "70000" if entity_name == "CM" else "103"
+    # 严格锁定的金蝶原始标准 65 列完整表头
+    jindie_headers = [
+        "FBillHead(GL_VOUCHER)", "FAccountBookID", "FAccountBookID#Name", "FDate", "FBUSDATE", 
+        "FYEAR", "FPERIOD", "FVOUCHERGROUPID", "FVOUCHERGROUPID#Name", "FVOUCHERGROUPNO", 
+        "FATTACHMENTS", "FISADJUSTVOUCHER", "FACCBOOKORGID", "FACCBOOKORGID#Name", 
+        "FSourceBillKey", "FSourceBillKey#Name", "FIMPORTVERSION", "*Split*1", 
+        "FEntity", "FEXPLANATION", "FACCOUNTID", "FACCOUNTID#Name", 
+        "FDetailID#FF100003", "FDetailID#FF100003#Name", "FDetailID#FF100002", "FDetailID#FF100002#Name", 
+        "FDetailID#FFLEX16", "FDetailID#FFLEX16#Name", "FDetailID#FFLEX15", "FDetailID#FFLEX15#Name", 
+        "FDetailID#FFLEX14", "FDetailID#FFLEX14#Name", "FDetailID#FFLEX13", "FDetailID#FFLEX13#Name", 
+        "FDetailID#FFLEX12", "FDetailID#FFLEX12#Name", "FDetailID#FFLEX11", "FDetailID#FFLEX11#Name", 
+        "FDetailID#FFlex10", "FDetailID#FFlex10#Name", "FDetailID#FFLEX9", "FDetailID#FFLEX9#Name", 
+        "FDetailID#FFlex8", "FDetailID#FFlex8#Name", "FDetailID#FFlex7", "FDetailID#FFlex7#Name", 
+        "FDetailID#FFlex6", "FDetailID#FFlex6#Name", "FDetailID#FFlex5", "FDetailID#FFlex5#Name", 
+        "FDetailID#FFlex4", "FDetailID#FFlex4#Name", "FDetailID#FFlex3", "FDetailID#FFlex3#Name", 
+        "FDetailID#FFLEX2", "FDetailID#FFLEX2#Name", "FDetailID#FFLEX", "FDetailID#FFLEX#Name", 
+        "FCURRENCYID", "FCURRENCYID#Name", "FEXCHANGERATETYPE", "FEXCHANGERATETYPE#Name", 
+        "FEXCHANGERATE", "FDEBIT", "FCREDIT"
+    ]
+    
+    # 英文月份标签简写
+    en_months = {
+        "1": "Jan", "2": "Feb", "3": "Mar", "4": "Apr", "5": "May", "6": "Jun",
+        "7": "Jul", "8": "Aug", "9": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"
+    }
+    en_month_label = en_months.get(month_str, "Month")
+    
+    # 根据主体类型确定专属编码
+    book_id = "002" if entity_name == "CM" else "005"
+    org_id = "100" if entity_name == "CM" else "103"
+    book_name = "CMS账簿" if entity_name == "CM" else "MH账簿"
     org_name = "Crazy Maple Studio, Inc." if entity_name == "CM" else "Maple House Inc"
     
-    for idx, (index_key, group) in enumerate(df_filter.groupby(['项目', '供应商-金蝶', '供应商编码']), start=1):
-        p_project, p_jindie, p_code = index_key
-        p_spent = group['spent'].sum()
-        if p_spent == 0:
+    rows = []
+    
+    # 按照项目 + 渠道 + 开户方聚合进行一借一贷拆分
+    df_grouped = df_filter.groupby(['项目', '投放渠道', '开户方', '供应商-金蝶', '供应商编码'], dropna=False)
+    
+    for idx, (group_keys, group_data) in enumerate(df_grouped, start=1):
+        p_project, p_channel, p_kf, p_jindie, p_code = group_keys
+        p_spent = group_data['spent'].sum()
+        if p_spent <= 0:
             continue
             
-        # 组装摘要文本
-        explanation = f"{int(month_str)}月推广成本计提-May.2026 advertising and marketing cost accrual-{p_jindie}"
+        # 规则 3：复合动态摘要拼接
+        if str(p_kf).strip() != "":
+            explanation = f"计提2026年{month_str}月推广费用- {en_month_label}.2026 advertising and marketing cost accrual-{p_channel}-{p_kf}"
+        else:
+            explanation = f"计提2026年{month_str}月推广费用- {en_month_label}.2026 advertising and marketing cost accrual-{p_channel}"
+            
+        amt_formatted = f"{p_spent:,.2f}" # 保留两位小数并附带千分位
         
-        # 1. 借方明细 (成本费用分录)
-        row_dr = {
-            'FBillHead(GL_VOUCHER)': f'VOU{year_str}{month_str.zfill(2)}{idx:03d}',
-            'FAccountBookID': 'PRE001' if entity_name == "CM" else "MH01",
-            'FAccountBookID#Name': 'CMS账簿' if entity_name == "CM" else "MH账簿",
-            'FDate': f"2026-{month_str.zfill(2)}-30",
-            'FBUSDATE': f"2026-{month_str.zfill(2)}-30",
-            'FYEAR': "2026",
-            'FPERIOD': month_str,
-            'FVOUCHERGROUPID': "PRE001",
-            'FVOUCHERGROUPID#Name': "记账凭证",
-            'FVOUCHERGROUPNO': str(idx),
-            'FATTACHMENTS': "1",
-            'FISADJUSTVOUCHER': "0",
-            'FACCBOOKORGID': org_id,
-            'FACCBOOKORGID#Name': org_name,
-            'FSourceBillKey': "", 'FSourceBillKey#Name': "", 'FIMPORTVERSION': "", '*Split*1': "",
-            'FEntity': str((idx-1)*2 + 1),
+        # 构建通用的基础列骨架
+        base_row = {h: "" for h in jindie_headers}
+        
+        # 规则 4 & 5：只有整个分录的第一行（即 idx==1 的借方行）需要填充 A-R 列头信息
+        if idx == 1:
+            base_row.update({
+                'FBillHead(GL_VOUCHER)': '1',
+                'FAccountBookID': book_id,
+                'FAccountBookID#Name': book_name,
+                'FDate': f"2026-{month_str.zfill(2)}-30",
+                'FBUSDATE': f"2026-{month_str.zfill(2)}-30",
+                'FYEAR': "2026",
+                'FPERIOD': month_str,
+                'FVOUCHERGROUPID': "PRE001",
+                'FVOUCHERGROUPID#Name': "", # 规则 5：留空
+                'FVOUCHERGROUPNO': "1",
+                'FATTACHMENTS': "1",
+                'FISADJUSTVOUCHER': "0",
+                'FACCBOOKORGID': org_id,
+                'FACCBOOKORGID#Name': org_name,
+                'FSourceBillKey': "", 'FSourceBillKey#Name': "", 'FIMPORTVERSION': "", '*Split*1': ""
+            })
+            
+        # ----------------------------------------------------
+        # 1. 产生借方行分录 (6601.03.01)
+        # ----------------------------------------------------
+        row_dr = base_row.copy()
+        row_dr.update({
+            'FEntity': str((idx - 1) * 2 + 1),
             'FEXPLANATION': explanation,
             'FACCOUNTID': '6601.03.01',
-            'FACCOUNTID#Name': '销售费用-推广费-广告费',
-            'FDetailID#FF100003': "", 'FDetailID#FF100003#Name': "",
-            'FDetailID#FF100002': "", 'FDetailID#FF100002#Name': "",
-            'FDetailID#FFLEX16': "", 'FDetailID#FFLEX16#Name': "",
-            'FDetailID#FFLEX15': "", 'FDetailID#FFLEX15#Name': "",
-            'FDetailID#FFLEX14': p_project, # 项目编码位置
-            'FDetailID#FFLEX14#Name': "",
-            'FDetailID#FFLEX13': "", 'FDetailID#FFLEX13#Name': "",
-            'FDetailID#FFLEX12': "", 'FDetailID#FFLEX12#Name': "",
-            'FDetailID#FFLEX11': "", 'FDetailID#FFLEX11#Name': "",
-            'FDetailID#FFlex10': "", 'FDetailID#FFlex10#Name': "",
-            'FDetailID#FFLEX9': "", 'FDetailID#FFLEX9#Name': "",
-            'FDetailID#FFlex8': "", 'FDetailID#FFlex8#Name': "",
-            'FDetailID#FFlex7': "", 'FDetailID#FFlex7#Name': "",
-            'FDetailID#FFlex6': "", 'FDetailID#FFlex6#Name': "",
-            'FDetailID#FFlex5': "", 'FDetailID#FFlex5#Name': "",
-            'FDetailID#FFlex4': "", 'FDetailID#FFlex4#Name': "",
-            'FDetailID#FFlex3': "", 'FDetailID#FFlex3#Name': "",
-            'FDetailID#FFLEX2': "", 'FDetailID#FFLEX2#Name': "",
-            'FDetailID#FFLEX': "", 'FDetailID#FFLEX#Name': "",
+            'FACCOUNTID#Name': "", # 规则 4：无需填写
+            'FDetailID#FFLEX14': p_project, # 项目编码挂载在 FFLEX14
+            'FDetailID#FFlex5': "7000",     # 规则 6：7000填入6601.03.01的 FFlex5 处
             'FCURRENCYID': 'PRE007',
             'FCURRENCYID#Name': '美元',
             'FEXCHANGERATETYPE': 'HLTX01_SYS',
             'FEXCHANGERATETYPE#Name': '固定汇率',
             'FEXCHANGERATE': '1',
-            'FDEBIT': f"{p_spent:.2f}",
-            'FCREDIT': "0.00"
-        }
+            'FDEBIT': amt_formatted,        # 规则 2：借方录入金额
+            'FCREDIT': ""                   # 规则 2：贷方为空
+        })
         
-        # 2. 贷方明细 (应付外汇分录)
-        row_cr = row_dr.copy()
-        row_cr['FEntity'] = str((idx-1)*2 + 2)
-        row_cr['FACCOUNTID'] = '2202.02'
-        row_cr['FACCOUNTID#Name'] = '应付账款-应付外汇账款'
-        row_cr['FDetailID#FFLEX14'] = "" # 贷方无项目维度
-        row_cr['FDetailID#FFlex5'] = p_code  # 供应商编码挂载位置
-        row_cr['FDEBIT'] = "0.00"
-        row_cr['FCREDIT'] = f"{p_spent:.2f}"
+        # ----------------------------------------------------
+        # 2. 产生贷方行分录 (2202.02)
+        # ----------------------------------------------------
+        row_cr = {h: "" for h in jindie_headers} # 后续的分录行 A-R 完全留空白
+        row_cr.update({
+            'FEntity': str((idx - 1) * 2 + 2),
+            'FEXPLANATION': explanation,
+            'FACCOUNTID': '2202.02',
+            'FACCOUNTID#Name': "", # 无需填写
+            'FDetailID#FFlex5': p_code,     # 供应商编码挂载在贷方的 FFlex5 位置
+            'FCURRENCYID': 'PRE007',
+            'FCURRENCYID#Name': '美元',
+            'FEXCHANGERATETYPE': 'HLTX01_SYS',
+            'FEXCHANGERATETYPE#Name': '固定汇率',
+            'FEXCHANGERATE': '1',
+            'FDEBIT': "",                   # 规则 2：借方为空
+            'FCREDIT': amt_formatted        # 规则 2：贷方录入金额
+        })
         
         rows.extend([row_dr, row_cr])
         
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=jindie_headers)
 
 def process_data(files):
     all_data = []
@@ -298,17 +339,17 @@ if uploaded_files:
         pivot_cols = ['买量产品', '核算主体', 'spent', '投放渠道', '开户方', '项目', '供应商-渠道', '供应商-金蝶', '供应商编码']
         df_pivot = df_pivot[pivot_cols]
         
-        # 智能防漏账警报机制
+        # 智能匹配情况提醒
         df_failed_check = df_pivot[(df_pivot['核算主体'] != 'NL') & ((df_pivot['供应商-金蝶'] == "") | (df_pivot['供应商编码'] == ""))]
         if not df_failed_check.empty:
             failed_channels = df_failed_check['供应商-渠道'].unique()
-            st.warning(f"⚠️ **主数据匹配警报**：发现有 **{len(failed_channels)}** 个【供应商-渠道】在 MP 表中未成功提取金蝶资料，请维护好 MP 表后重新运行。")
+            st.warning(f"⚠️ **主数据匹配警报**：发现有 **{len(failed_channels)}** 个【供应商-渠道】未识别到金蝶信息，请维护 MP 映射表。")
             st.code("\n".join([f"• {chan}" for chan in failed_channels]), language="text")
         else:
             st.success("✅ **主数据核对通过**：CM/MH 主体的所有供应商名称与编码已 100% 精准匹配成功！")
 
         # ==========================================
-        # 1. 导出：原有常规业务分析总表 
+        # 1. 导出：常规业务分析总表 
         # ==========================================
         wb_orig = openpyxl.Workbook()
         ws_orig = wb_orig.active
@@ -326,14 +367,8 @@ if uploaded_files:
         fill_pivot_hdr = PatternFill(start_color="339977", end_color="339977", fill_type="solid")
         fill_zebra = PatternFill(start_color="F9FBFC", end_color="F9FBFC", fill_type="solid")
         
-        thin_border = Border(
-            left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0'),
-            top=Side(style='thin', color='E0E0E0'), bottom=Side(style='thin', color='E0E0E0')
-        )
-        total_border = Border(
-            top=Side(style='medium', color='D32F2F'), bottom=Side(style='medium', color='D32F2F'),
-            left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0')
-        )
+        thin_border = Border(left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0'), top=Side(style='thin', color='E0E0E0'), bottom=Side(style='thin', color='E0E0E0'))
+        total_border = Border(top=Side(style='medium', color='D32F2F'), bottom=Side(style='medium', color='D32F2F'), left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0'))
         
         detail_cols = ['投放渠道', '开户方', '广告户名', 'spent', '买量产品', '核算主体']
         detail_end = len(df_detail) + 3
@@ -341,77 +376,49 @@ if uploaded_files:
         
         ws_orig.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
-            cell = ws_orig.cell(row=1, column=c)
-            cell.border = total_border
+            cell = ws_orig.cell(row=1, column=c); cell.border = total_border
             if detail_cols[c-1] == 'spent':
-                cell.value = f"=SUBTOTAL(9, D4:D{detail_end})"
-                cell.font = font_total
-                cell.number_format = '#,##0.00'
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-            elif c == 1:
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-            else:
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.value = f"=SUBTOTAL(9, D4:D{detail_end})"; cell.font = font_total; cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif c == 1: cell.alignment = Alignment(horizontal="left", vertical="center")
+            else: cell.alignment = Alignment(horizontal="center", vertical="center")
                 
-        ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
-        ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
+        ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total; ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
+        cell_orig_sub = ws_orig.cell(row=1, column=10); cell_orig_sub.value = f"=SUBTOTAL(9, J4:J{pivot_end})"; cell_orig_sub.font = font_total; cell_orig_sub.number_format = '#,##0.00'; cell_orig_sub.alignment = Alignment(horizontal="right", vertical="center")
         
-        cell_orig_sub = ws_orig.cell(row=1, column=10)
-        cell_orig_sub.value = f"=SUBTOTAL(9, J4:J{pivot_end})"
-        cell_orig_sub.font = font_total
-        cell_orig_sub.number_format = '#,##0.00'
-        cell_orig_sub.alignment = Alignment(horizontal="right", vertical="center")
+        ws_orig.cell(row=1, column=11, value="CM:").font = font_total; ws_orig.cell(row=1, column=11).alignment = Alignment(horizontal="right", vertical="center")
+        cell_cm_sumif = ws_orig.cell(row=1, column=12, value=f'=SUMIF(I4:I{pivot_end}, \"CM\", J4:J{pivot_end})'); cell_cm_sumif.font = font_total; cell_cm_sumif.number_format = '#,##0.00'; cell_cm_sumif.alignment = Alignment(horizontal="right")
         
-        ws_orig.cell(row=1, column=11, value="CM:").font = font_total
-        ws_orig.cell(row=1, column=11).alignment = Alignment(horizontal="right", vertical="center")
-        cell_cm_sumif = ws_orig.cell(row=1, column=12, value=f'=SUMIF(I4:I{pivot_end}, "CM", J4:J{pivot_end})')
-        cell_cm_sumif.font = font_total; cell_cm_sumif.number_format = '#,##0.00'; cell_cm_sumif.alignment = Alignment(horizontal="right")
+        ws_orig.cell(row=1, column=13, value="MH:").font = font_total; ws_orig.cell(row=1, column=13).alignment = Alignment(horizontal="right", vertical="center")
+        cell_mh_sumif = ws_orig.cell(row=1, column=14, value=f'=SUMIF(I4:I{pivot_end}, \"MH\", J4:J{pivot_end})'); cell_mh_sumif.font = font_total; cell_mh_sumif.number_format = '#,##0.00'; cell_mh_sumif.alignment = Alignment(horizontal="right")
         
-        ws_orig.cell(row=1, column=13, value="MH:").font = font_total
-        ws_orig.cell(row=1, column=13).alignment = Alignment(horizontal="right", vertical="center")
-        cell_mh_sumif = ws_orig.cell(row=1, column=14, value=f'=SUMIF(I4:I{pivot_end}, "MH", J4:J{pivot_end})')
-        cell_mh_sumif.font = font_total; cell_mh_sumif.number_format = '#,##0.00'; cell_mh_sumif.alignment = Alignment(horizontal="right")
+        ws_orig.cell(row=1, column=15, value="CM+MH:").font = font_total; ws_orig.cell(row=1, column=15).alignment = Alignment(horizontal="right", vertical="center")
+        cell_cm_mh_ttl = ws_orig.cell(row=1, column=16, value=f'=L1+N1'); cell_cm_mh_ttl.font = font_total; cell_cm_mh_ttl.number_format = '#,##0.00'; cell_cm_mh_ttl.alignment = Alignment(horizontal="right")
         
-        ws_orig.cell(row=1, column=15, value="CM+MH:").font = font_total
-        ws_orig.cell(row=1, column=15).alignment = Alignment(horizontal="right", vertical="center")
-        cell_cm_mh_ttl = ws_orig.cell(row=1, column=16, value=f'=L1+N1') 
-        cell_cm_mh_ttl.font = font_total; cell_cm_mh_ttl.number_format = '#,##0.00'; cell_cm_mh_ttl.alignment = Alignment(horizontal="right")
-        
-        for c in range(8, 8 + len(pivot_cols)):
-            ws_orig.cell(row=1, column=c).border = total_border
+        for c in range(8, 8 + len(pivot_cols)): ws_orig.cell(row=1, column=c).border = total_border
         
         ws_orig.merge_cells("A2:F2")
-        ws_orig["A2"] = "投放费用明细表"
-        ws_orig["A2"].font = font_title; ws_orig["A2"].fill = fill_detail_title; ws_orig["A2"].alignment = Alignment(horizontal="center")
+        ws_orig["A2"] = "投放费用明细表"; ws_orig["A2"].font = font_title; ws_orig["A2"].fill = fill_detail_title; ws_orig["A2"].alignment = Alignment(horizontal="center")
         
         end_letter = openpyxl.utils.get_column_letter(7 + len(pivot_cols))
         ws_orig.merge_cells(f"H2:{end_letter}2")
-        ws_orig["H2"] = "投放费用透视表"
-        ws_orig["H2"].font = font_title; ws_orig["H2"].fill = fill_pivot_title; ws_orig["H2"].alignment = Alignment(horizontal="center")
+        ws_orig["H2"] = "投放费用透视表"; ws_orig["H2"].font = font_title; ws_orig["H2"].fill = fill_pivot_title; ws_orig["H2"].alignment = Alignment(horizontal="center")
         
         for idx, col in enumerate(detail_cols, 1):
-            cell = ws_orig.cell(row=3, column=idx, value=col)
-            cell.font = font_header; cell.fill = fill_detail_hdr; cell.alignment = Alignment(horizontal="center")
+            cell = ws_orig.cell(row=3, column=idx, value=col); cell.font = font_header; cell.fill = fill_detail_hdr; cell.alignment = Alignment(horizontal="center")
         for idx, col in enumerate(pivot_cols, 8):
-            cell = ws_orig.cell(row=3, column=idx, value=col)
-            cell.font = font_header; cell.fill = fill_pivot_hdr; cell.alignment = Alignment(horizontal="center")
+            cell = ws_orig.cell(row=3, column=idx, value=col); cell.font = font_header; cell.fill = fill_pivot_hdr; cell.alignment = Alignment(horizontal="center")
             
         for r_idx, row in enumerate(dataframe_to_rows(df_detail.rename(columns={'开户服务商': '开户方', '消耗': 'spent'})[detail_cols], index=False, header=False), start=4):
             for c_idx, val in enumerate(row, start=1):
-                cell = ws_orig.cell(row=r_idx, column=c_idx, value=val)
-                cell.font = font_body; cell.border = thin_border
-                if detail_cols[c_idx-1] == 'spent':
-                    cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
-                else:
-                    cell.alignment = Alignment(horizontal="center")
+                cell = ws_orig.cell(row=r_idx, column=c_idx, value=val); cell.font = font_body; cell.border = thin_border
+                if detail_cols[c_idx-1] == 'spent': cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
+                else: cell.alignment = Alignment(horizontal="center")
                 if r_idx % 2 == 0: cell.fill = fill_zebra
                     
         for r_idx, row in enumerate(dataframe_to_rows(df_pivot[pivot_cols], index=False, header=False), start=4):
             for c_idx, val in enumerate(row, start=8):
-                cell = ws_orig.cell(row=r_idx, column=c_idx, value=val)
-                cell.font = font_body; cell.border = thin_border
-                if pivot_cols[c_idx-8] == 'spent':
-                    cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
+                cell = ws_orig.cell(row=r_idx, column=c_idx, value=val); cell.font = font_body; cell.border = thin_border
+                if pivot_cols[c_idx-8] == 'spent': cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
                 else:
                     cell.alignment = Alignment(horizontal="center")
                     if pivot_cols[c_idx-8] in ['项目', '供应商编码']: cell.number_format = '@'
@@ -426,7 +433,7 @@ if uploaded_files:
         excel_data_orig = io.BytesIO(); wb_orig.save(excel_data_orig); excel_data_orig.seek(0)
 
         # ==========================================
-        # 2. 导出：【给领导的汇总表】固定 6 页多 Sheet 纯流水
+        # 2. 导出：【给领导的汇总表】
         # ==========================================
         wb_leader = openpyxl.Workbook(); wb_leader.remove(wb_leader.active)
         font_l_hdr = Font(name="微软雅黑", size=10, bold=True)
@@ -474,26 +481,25 @@ if uploaded_files:
         excel_data_leader = io.BytesIO(); wb_leader.save(excel_data_leader); excel_data_leader.seek(0)
 
         # ==========================================
-        # 3. 👑 核心追加：自动生成 CM 主体与 MH 主体金蝶标准凭证 Excel
+        # 3. 👑 核心生成：依照 6 大严格凭证指标生成的金蝶大件
         # ==========================================
-        clean_m_str = month_label.replace("月", "") # 获取纯数字月份如 "5"
+        clean_m_str = month_label.replace("月", "") 
         
-        # 构造 CM 凭证
-        df_cm_voucher = build_jindie_voucher(df_pivot, "CM", clean_m_str, "2026")
+        # 严格执行规则构建凭证拉平格式
+        df_cm_voucher = build_jindie_voucher_strict(df_pivot, "CM", clean_m_str)
         excel_cm_v = io.BytesIO()
         with pd.ExcelWriter(excel_cm_v, engine='openpyxl') as writer:
             df_cm_voucher.to_excel(writer, sheet_name='凭证#单据头(FBillHead)', index=False)
         excel_cm_v.seek(0)
         
-        # 构造 MH 凭证
-        df_mh_voucher = build_jindie_voucher(df_pivot, "MH", clean_m_str, "2026")
+        df_mh_voucher = build_jindie_voucher_strict(df_pivot, "MH", clean_m_str)
         excel_mh_v = io.BytesIO()
         with pd.ExcelWriter(excel_mh_v, engine='openpyxl') as writer:
             df_mh_voucher.to_excel(writer, sheet_name='凭证#单据头(FBillHead)', index=False)
         excel_mh_v.seek(0)
 
         # ==========================================
-        # 4. Streamlit 前端多通道按钮平铺呈现
+        # 4. 前端一键分流呈现下载
         # ==========================================
         st.markdown("---")
         st.markdown("### 📥 基础业务与高管总表下载")
@@ -511,7 +517,7 @@ if uploaded_files:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口（外汇分录专供）")
+        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口 (100% 匹配要求版)")
         c_v1, c_v2 = st.columns(2)
         with c_v1:
             st.download_button(
