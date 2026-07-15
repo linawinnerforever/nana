@@ -163,11 +163,11 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="2202.02")  # FACCOUNTID
         ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4 (第51列：供应商#编码)
-        ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
-        ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
-        ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
-        ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
-        ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
+        ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
+        ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
+        ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
+        ws.cell(row=current_row, column=60, value="固定汇率")  # FEXCHANGERATETYPE#Name
+        ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
         
         # 贷方纯数字千分位
         cell_cr = ws.cell(row=current_row, column=66, value=round(p_spent, 2)) # 第66列 FCREDIT
