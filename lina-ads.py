@@ -294,4 +294,58 @@ if uploaded_files:
         
         ws_leader.cell(row=1, column=9, value=f"=SUM(I4:I{data_end_row})").font = font_leader_top
         ws_leader.cell(row=1, column=9).number_format = '#,##0.00'
-        ws_leader.cell(row=1, column=
+        ws_leader.cell(row=1, column=9).alignment = align_right
+        
+        # Row 3: 放置原装中文表头
+        for idx, h_name in enumerate(leader_headers, 1):
+            cell = ws_leader.cell(row=3, column=idx, value=h_name)
+            cell.font = font_leader_hdr
+            cell.alignment = align_center
+            cell.border = leader_thin_border
+        ws_leader.row_dimensions[3].height = 24
+        
+        # Row 4 起：循环填入拉平的明细数据
+        for r_idx, row in enumerate(dataframe_to_rows(df_leader_final, index=False, header=False), start=4):
+            for c_idx, val in enumerate(row, start=1):
+                cell = ws_leader.cell(row=r_idx, column=c_idx, value=val)
+                cell.font = font_leader_body
+                cell.border = leader_thin_border
+                
+                if leader_headers[c_idx-1] in ["消耗", "代投费", "投放待结算"]:
+                    cell.number_format = '#,##0.00'
+                    cell.alignment = align_right
+                else:
+                    cell.alignment = align_center
+            ws_leader.row_dimensions[r_idx].height = 20
+            
+        # 自动调整每列的合适宽度
+        for col in ws_leader.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws_leader.column_dimensions[col_letter].width = max(max_len + 3, 13)
+            
+        excel_data_leader = io.BytesIO()
+        wb_leader.save(excel_data_leader)
+        excel_data_leader.seek(0)
+        
+        # 前端交互双通道按钮
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.info("📊 常规业务分析汇总表")
+            st.download_button(
+                label="点击下载新样式 Excel 报表",
+                data=excel_data_orig,
+                file_name=f"🤝投放费用汇总_对齐美化版_{current_month}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+        with col2:
+            st.success("👑 专属管理层汇报汇总表 (完全依照原厂底表样式结构)")
+            st.download_button(
+                label="点击下载给领导的汇总表",
+                data=excel_data_leader,
+                file_name=f"推广费用-各主体情况汇总_{current_month}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
