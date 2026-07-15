@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V26 (终极财务看板版)")
-st.markdown("特性：**第一行右侧看板文案已精简为『CM 额 (SUMIF):』与『MH 额 (SUMIF):』。** 样式与 SUBTOTAL 完美融合，干净整洁。")
+st.title("📊 投放费用月度数据汇总与透视工具 V28 (智能防漏账版)")
+st.markdown("特性：**新增主数据未匹配成功自动报警提示。** 第一行右侧并联看板与金蝶核心维度反查已完全固化。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -217,7 +217,22 @@ if uploaded_files:
         df_pivot = df_pivot[pivot_cols]
         
         # ==========================================
-        # 按钮一：原有常规业务分析总表 (大盘公式并联至第一行)
+        # 👑 核心新增提示逻辑：检查并报警未匹配成功的供应商
+        # ==========================================
+        # 排除无需挂账的 NL 主体，筛选金蝶名称或编码为空的行
+        df_failed_check = df_pivot[(df_pivot['核算主体'] != 'NL') & ((df_pivot['供应商-金蝶'] == "") | (df_pivot['供应商编码'] == ""))]
+        
+        if not df_failed_check.empty:
+            # 抓取去重后的未匹配成功的“供应商-渠道”
+            failed_channels = df_failed_check['供应商-渠道'].unique()
+            st.warning(f"⚠️ **主数据匹配警报**：发现有 **{len(failed_channels)}** 个【供应商-渠道】在 MP 表中未匹配到『金蝶名称』或『供应商编码』！请检查 MP 表对应的 K 列和 L 列。")
+            # 在页面上列出清单，方便直接复制去维护 MP 表
+            st.code("\n".join([f"• {chan}" for chan in failed_channels]), language="text")
+        else:
+            st.success("✅ **主数据核对通过**：CM/MH 主体的所有供应商名称与编码已 100% 精准匹配成功！")
+
+        # ==========================================
+        # 按钮一：原有常规业务分析总表
         # ==========================================
         wb_orig = openpyxl.Workbook()
         ws_orig = wb_orig.active
@@ -226,7 +241,7 @@ if uploaded_files:
         
         font_title = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
         font_header = Font(name="微软雅黑", size=10, bold=True, color="FFFFFF")
-        font_total = Font(name="微软雅黑", size=11, bold=True, color="D32F2F") # 财务红
+        font_total = Font(name="微软雅黑", size=11, bold=True, color="D32F2F") 
         font_body = Font(name="微软雅黑", size=10)
         
         fill_detail_title = PatternFill(start_color="2B4C7E", end_color="2B4C7E", fill_type="solid")
@@ -248,7 +263,7 @@ if uploaded_files:
         detail_end = len(df_detail) + 3
         pivot_end = len(df_pivot) + 3
         
-        # 明细总计
+        # 左明细总计
         ws_orig.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
             cell = ws_orig.cell(row=1, column=c)
@@ -263,7 +278,7 @@ if uploaded_files:
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 
-        # 透视大盘总计平铺
+        # 右透视大盘总计平铺并联
         ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
         ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
         
@@ -273,8 +288,7 @@ if uploaded_files:
         cell_orig_sub.number_format = '#,##0.00'
         cell_orig_sub.alignment = Alignment(horizontal="right", vertical="center")
         
-        # 【已经精简】：仅保留 CM 额 与 MH 额 标签文案
-        ws_orig.cell(row=1, column=11, value="CM 额 (SUMIF):").font = font_total
+        ws_orig.cell(row=1, column=11, value="CM:").font = font_total
         ws_orig.cell(row=1, column=11).alignment = Alignment(horizontal="right", vertical="center")
         
         cell_cm_sumif = ws_orig.cell(row=1, column=12, value=f'=SUMIF(I4:I{pivot_end}, "CM", J4:J{pivot_end})')
@@ -282,7 +296,7 @@ if uploaded_files:
         cell_cm_sumif.number_format = '#,##0.00'
         cell_cm_sumif.alignment = Alignment(horizontal="right", vertical="center")
         
-        ws_orig.cell(row=1, column=13, value="MH 额 (SUMIF):").font = font_total
+        ws_orig.cell(row=1, column=13, value="MH:").font = font_total
         ws_orig.cell(row=1, column=13).alignment = Alignment(horizontal="right", vertical="center")
         
         cell_mh_sumif = ws_orig.cell(row=1, column=14, value=f'=SUMIF(I4:I{pivot_end}, "MH", J4:J{pivot_end})')
@@ -290,7 +304,7 @@ if uploaded_files:
         cell_mh_sumif.number_format = '#,##0.00'
         cell_mh_sumif.alignment = Alignment(horizontal="right", vertical="center")
         
-        ws_orig.cell(row=1, column=15, value="CM+MH的spent:").font = font_total
+        ws_orig.cell(row=1, column=15, value="CM+MH:").font = font_total
         ws_orig.cell(row=1, column=15).alignment = Alignment(horizontal="right", vertical="center")
         
         cell_cm_mh_ttl = ws_orig.cell(row=1, column=16, value=f'=L1+N1') 
@@ -369,7 +383,7 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：【给领导的汇总表】固定多 Sheet 纯流水 
+        # 按钮二：【给领导的汇总表】
         # ==========================================
         wb_leader = openpyxl.Workbook()
         wb_leader.remove(wb_leader.active)
@@ -454,11 +468,6 @@ if uploaded_files:
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
-        # UI端双通道按钮下载布局呈现
-        st.markdown("---")
-        if not mp_file:
-            st.warning("⚠️ 提示：您尚未上传 MP 数据映射表，右侧金蝶核算维度字段将暂时显示为空白。")
-            
         col1, col2 = st.columns(2)
         with col1:
             st.info(f"📊 2026年{month_label}投放费用计提表")
