@@ -7,8 +7,8 @@ import io
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V5")
-st.markdown("已更新：总计行移至最上方第 1 行（大标题上方），且透视表不包含任何空值过滤。")
+st.title("📊 投放费用月度数据汇总与透视工具 V6")
+st.markdown("样式调整：总计行不填充颜色，文本左对齐，金额数字右对齐。")
 
 uploaded_files = st.file_uploader("上传业务计提表 (可多选 Excel 文件)", type=["xlsx", "xls"], accept_multiple_files=True)
 
@@ -82,7 +82,6 @@ if uploaded_files:
     if df_detail is not None:
         st.success("🎉 数据合并完成！")
         
-        # 分组聚合保留空值
         df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户方'], as_index=False, dropna=False)['spent'].sum()
         df_pivot = df_pivot[['买量产品', '核算主体', 'spent', '投放渠道', '开户方']]
         
@@ -91,7 +90,7 @@ if uploaded_files:
         ws.title = "费用汇总及透视表"
         ws.views.sheetView[0].showGridLines = True
         
-        # 样式定义
+        # 字体与边框样式
         font_title = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
         font_header = Font(name="微软雅黑", size=10, bold=True, color="FFFFFF")
         font_total = Font(name="微软雅黑", size=11, bold=True, color="D32F2F")
@@ -101,7 +100,6 @@ if uploaded_files:
         fill_pivot_title = PatternFill(start_color="1E6B52", end_color="1E6B52", fill_type="solid")
         fill_detail_hdr = PatternFill(start_color="4A7BB0", end_color="4A7BB0", fill_type="solid")
         fill_pivot_hdr = PatternFill(start_color="339977", end_color="339977", fill_type="solid")
-        fill_total = PatternFill(start_color="FFF3E0", end_color="FFF3E0", fill_type="solid")
         fill_zebra = PatternFill(start_color="F9FBFC", end_color="F9FBFC", fill_type="solid")
         
         thin_border = Border(
@@ -119,34 +117,36 @@ if uploaded_files:
         detail_end = len(df_detail) + 3
         pivot_end = len(df_pivot) + 3
         
-        # 【核心调整】第 1 行：放置最顶部的 SUBTOTAL 总计行
+        # 第 1 行：总计行（无填充颜色，左对齐字，右对齐数）
         ws.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
             cell = ws.cell(row=1, column=c)
-            cell.fill = fill_total
-            cell.border = total_border
+            cell.border = total_border  # 仅保留上下边框线，不设置 fill
             if detail_cols[c-1] == 'spent':
                 cell.value = f"=SUBTOTAL(9, D4:D{detail_end})"
                 cell.font = font_total
                 cell.number_format = '#,##0.00'
                 cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif c == 1:
+                cell.alignment = Alignment(horizontal="left", vertical="center")  # 文本左对齐
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 
         ws.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
         for c in range(8, 13):
             cell = ws.cell(row=1, column=c)
-            cell.fill = fill_total
             cell.border = total_border
             if pivot_cols[c-8] == 'spent':
                 cell.value = f"=SUBTOTAL(9, J4:J{pivot_end})"
                 cell.font = font_total
                 cell.number_format = '#,##0.00'
                 cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif c == 8:
+                cell.alignment = Alignment(horizontal="left", vertical="center")  # 文本左对齐
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
         
-        # 【核心调整】第 2 行：大标题行
+        # 第 2 行：大标题行
         ws.merge_cells("A2:F2")
         ws["A2"] = "投放费用明细表"
         ws["A2"].font = font_title
@@ -159,7 +159,7 @@ if uploaded_files:
         ws["H2"].fill = fill_pivot_title
         ws["H2"].alignment = Alignment(horizontal="center", vertical="center")
         
-        # 【核心调整】第 3 行：列名表头
+        # 第 3 行：表头行
         for idx, col in enumerate(detail_cols, 1):
             cell = ws.cell(row=3, column=idx, value=col)
             cell.font = font_header
@@ -172,7 +172,7 @@ if uploaded_files:
             cell.fill = fill_pivot_hdr
             cell.alignment = Alignment(horizontal="center", vertical="center")
             
-        # 第 4 行起：写入明细与透视数据
+        # 第 4 行起：填充数据
         for r_idx, row in enumerate(dataframe_to_rows(df_detail[detail_cols], index=False, header=False), start=4):
             for c_idx, val in enumerate(row, start=1):
                 cell = ws.cell(row=r_idx, column=c_idx, value=val)
@@ -212,8 +212,8 @@ if uploaded_files:
         excel_data.seek(0)
         
         st.download_button(
-            label="点击下载「最上方总计完美对齐版」Excel报表",
+            label="点击下载新样式 Excel 报表",
             data=excel_data,
-            file_name="🤝投放费用汇总_最上方总计版.xlsx",
+            file_name="🤝投放费用汇总_对齐美化版.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
