@@ -151,7 +151,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
         
         # 借方纯数字千分位
-        cell_dr = ws.cell(row=current_row, column=65, value=round(p_spent, 2)) # 第65列 FDEBIT
+        cell_dr = ws.cell(row=current_row, column=67, value=round(p_spent, 2)) # 第67列 FDEBIT
         cell_dr.number_format = '#,##0.00'
         
         current_row += 1
@@ -170,7 +170,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
         
         # 贷方纯数字千分位
-        cell_cr = ws.cell(row=current_row, column=66, value=round(p_spent, 2)) # 第66列 FCREDIT
+        cell_cr = ws.cell(row=current_row, column=68, value=round(p_spent, 2)) # 第68列 FCREDIT
         cell_cr.number_format = '#,##0.00'
         
         current_row += 1
