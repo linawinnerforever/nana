@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V20")
-st.markdown("特性：已修复项目列（核算编码）为 001、002 标准格式。完美匹配最新 MP 结构，且 NL 主体已自动留空无需匹配。")
+st.title("📊 投放费用月度数据汇总与透视工具 V21")
+st.markdown("特性：完美修复了最新 MP 表下**『供应商-金蝶』**与项目列**财务三位码（001/002）**的精确绑定与 NL 主体豁免逻辑。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -21,7 +21,7 @@ with col_u2:
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
-    'maxdrama': {'product': 'MaxDrama', 'entity': 'NL'},  # MaxDrama 为 NL 主体
+    'maxdrama': {'product': 'MaxDrama', 'entity': 'NL'}, 
     'merge': {'product': 'Merge', 'entity': 'CM'},
     'reelshort': {'product': 'Reelshort', 'entity': 'NL'},
     'rsnovel': {'product': 'RS N', 'entity': 'NL'}
@@ -48,9 +48,9 @@ def clean_amount(val):
 
 @st.cache_data
 def load_mp_matrix(file):
-    """解析财务底盘 MP 矩阵关系 (跳过前两行标题区，确保读取最干净的原始文本类型)"""
+    """解析财务底盘 MP 关系 (跳过第一行宏观标题，从真正的中文表头行开始读入数据)"""
     try:
-        df_mp = pd.read_excel(file, skiprows=1, dtype=str) # 采用全文本读取，保护前置零
+        df_mp = pd.read_excel(file, skiprows=1, dtype=str)
         df_mp.columns = [str(c).strip() for c in df_mp.columns]
         return df_mp
     except Exception as e:
@@ -154,37 +154,37 @@ if uploaded_files:
         df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['消耗'].sum()
         df_pivot.rename(columns={'开户服务商': '开户方', '消耗': 'spent'}, inplace=True)
         
-        # 供应商-渠道 主键规则
+        # 供应商-渠道 主键生成规则
         df_pivot['供应商-渠道'] = df_pivot.apply(
             lambda r: str(r['开户方']).strip() if str(r['开户方']).strip() != "" else str(r['投放渠道']).strip(), axis=1
         )
         
-        # 初始化为标准的纯字符串Object，抗报错处理
         df_pivot['项目'] = ""
         df_pivot['供应商-金蝶'] = ""
         df_pivot['供应商编码'] = ""
         df_pivot = df_pivot.astype({'项目': 'object', '供应商-金蝶': 'object', '供应商编码': 'object'})
         
         if df_mp_matrix is not None:
+            # 1. 建立项目三位码转换词典
             dict_project = {}
             for _, r in df_mp_matrix.iterrows():
                 k_prod = str(r.iloc[13]).strip().lower() # 第14列"核算维度"
                 v_code = str(r.iloc[14]).strip()        # 第15列"核算编码"
                 if k_prod and k_prod != 'nan':
-                    # 【核心修正】：去掉可能因为浮点转换误加的 .0 并强制格式化补齐为财务三位码 (001, 002)
                     v_code_clean = v_code.split('.')[0].zfill(3)
                     dict_project[k_prod] = v_code_clean
             
+            # 2. 建立精准的组织金蝶主数据映射词典 (根据第11列"供应商-渠道"映射)
             dict_cm_name, dict_cm_code = {}, {}
             dict_mh_name, dict_mh_code = {}, {}
             
             for _, r in df_mp_matrix.iterrows():
-                k_chan = str(r.iloc[10]).strip().lower() # 第11列为“渠道”
+                k_chan = str(r.iloc[10]).strip().lower() # 匹配第11列"供应商-渠道"
                 if k_chan and k_chan != 'nan':
                     dict_cm_code[k_chan] = str(r.iloc[0]).strip()  # 第1列 CM编码
-                    dict_cm_name[k_chan] = str(r.iloc[2]).strip()  # 第3列 CM名称
+                    dict_cm_name[k_chan] = str(r.iloc[2]).strip()  # 第3列 CM名称/供应商-金蝶
                     dict_mh_code[k_chan] = str(r.iloc[5]).strip()  # 第6列 MH编码
-                    dict_mh_name[k_chan] = str(r.iloc[7]).strip()  # 第8列 MH名称
+                    dict_mh_name[k_chan] = str(r.iloc[7]).strip()  # 第8列 MH名称/供应商-金蝶
 
             p_chan_lower = df_pivot['供应商-渠道'].astype(str).str.strip().str.lower()
             p_prod_lower = df_pivot['买量产品'].astype(str).str.strip().str.lower()
@@ -198,7 +198,7 @@ if uploaded_files:
             for idx, row in df_pivot.iterrows():
                 entity = str(row['核算主体']).upper().strip()
                 
-                # 新增核心指示：如果是 NL 主体，直接跳过保持空白入账
+                # 过滤条件：如果是 NL 主体，无需匹配入账，全部留空
                 if entity == 'NL':
                     continue
                 
@@ -215,7 +215,7 @@ if uploaded_files:
         df_pivot = df_pivot[pivot_cols]
         
         # ==========================================
-        # 按钮一：原有常规业务分析总表 (右侧透视列完全稳固)
+        # 按钮一：原有常规业务分析总表 (已全面加固)
         # ==========================================
         wb_orig = openpyxl.Workbook()
         ws_orig = wb_orig.active
@@ -323,7 +323,6 @@ if uploaded_files:
                     cell.alignment = Alignment(horizontal="right", vertical="center")
                 else:
                     cell.alignment = Alignment(horizontal="center", vertical="center")
-                    # 金蝶维度编码等字段强制以普通文本靠中显示，防止 Excel 抹除前置零
                     if pivot_cols[c_idx-8] in ['项目', '供应商编码']:
                         cell.number_format = '@'
 
@@ -427,7 +426,7 @@ if uploaded_files:
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
-        # UI 双通道渲染
+        # UI 展现与双通道按钮下载
         st.markdown("---")
         if not mp_file:
             st.warning("⚠️ 提示：您尚未上传 MP 数据映射表，右侧常规分析表中的金蝶映射字段将暂时显示为空白。若需生成带编码的分析表，请在右上角上传 MP 表后再点击下载。")
