@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V23 (完美凭证版)")
-st.markdown("特性：**供应商编码已严格锁定：根据核算主体(CM/MH)与匹配出的『供应商-金蝶』，跨表追溯 MP 表 A列/F列的对应编码。**")
+st.title("📊 投放费用月度数据汇总与透视工具 V24 (凭证无损版)")
+st.markdown("特性：**已在计提透视表上方新增 CM、MH、CM+MH 的动态 SUMIF 看板。** 修正了表头文字，供应商反查及三位项目编码完全锁定。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -48,7 +48,6 @@ def clean_amount(val):
 
 @st.cache_data
 def load_mp_matrix(file):
-    """读取 MP 表，强制全文本以防 Excel 吞掉编码前置零"""
     try:
         df_mp = pd.read_excel(file, skiprows=1, dtype=str)
         df_mp.columns = [str(c).strip() for c in df_mp.columns]
@@ -154,7 +153,6 @@ if uploaded_files:
         df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['消耗'].sum()
         df_pivot.rename(columns={'开户服务商': '开户方', '消耗': 'spent'}, inplace=True)
         
-        # 供应商-渠道主键
         df_pivot['供应商-渠道'] = df_pivot.apply(
             lambda r: str(r['开户方']).strip() if str(r['开户方']).strip() != "" else str(r['投放渠道']).strip(), axis=1
         )
@@ -165,7 +163,6 @@ if uploaded_files:
         df_pivot = df_pivot.astype({'项目': 'object', '供应商-金蝶': 'object', '供应商编码': 'object'})
         
         if df_mp_matrix is not None:
-            # 1. 建立项目三位财务编码字典 (N列 -> O列)
             dict_project = {}
             for _, r in df_mp_matrix.iterrows():
                 k_prod = str(r.iloc[13]).strip().lower() 
@@ -173,7 +170,6 @@ if uploaded_files:
                 if k_prod and k_prod != 'nan':
                     dict_project[k_prod] = v_code.split('.')[0].zfill(3)
             
-            # 2. 建立『渠道』到『金蝶名称』的桥梁字典 (K列 -> L列)
             dict_supplier_jindie = {}
             for _, r in df_mp_matrix.iterrows():
                 k_chan = str(r.iloc[10]).strip().lower() 
@@ -181,42 +177,35 @@ if uploaded_files:
                 if k_chan and k_chan != 'nan':
                     dict_supplier_jindie[k_chan] = v_jindie
             
-            # 3. 核心修复逻辑：建立『金蝶名称』到『供应商编码』的安全反查词典
-            dict_cm_code_by_name = {}  # CM视角：C列名称 -> A列编码
-            dict_mh_code_by_name = {}  # MH视角：H列名称 -> F列编码
+            dict_cm_code_by_name = {}  
+            dict_mh_code_by_name = {}  
             
             for _, r in df_mp_matrix.iterrows():
-                cm_name = str(r.iloc[2]).strip()   # C列: CM名称
-                cm_code = str(r.iloc[0]).strip()   # A列: CM编码
-                mh_name = str(r.iloc[7]).strip()   # H列: MH名称
-                mh_code = str(r.iloc[5]).strip()   # F列: MH编码
+                cm_name = str(r.iloc[2]).strip()   
+                cm_code = str(r.iloc[0]).strip()   
+                mh_name = str(r.iloc[7]).strip()   
+                mh_code = str(r.iloc[5]).strip()   
                 
                 if cm_name and cm_name != 'nan':
                     dict_cm_code_by_name[cm_name.lower()] = cm_code
                 if mh_name and mh_name != 'nan':
                     dict_mh_code_by_name[mh_name.lower()] = mh_code
 
-            # 矢量化全局映射计算
             p_chan_lower = df_pivot['供应商-渠道'].astype(str).str.strip().str.lower()
             p_prod_lower = df_pivot['买量产品'].astype(str).str.strip().str.lower()
             
             mapped_project = p_prod_lower.map(dict_project).fillna("")
             mapped_jindie = p_chan_lower.map(dict_supplier_jindie).fillna("")
             
-            # 逐行填入并根据主体性质跨表精准提码
             for idx, row in df_pivot.iterrows():
                 entity = str(row['核算主体']).upper().strip()
-                
-                # 豁免策略：NL主体免财务挂账，全部留空
                 if entity == 'NL':
                     continue
                 
-                # 写入固定的项目编码与供应商名称
                 df_pivot.at[idx, '项目'] = mapped_project.iloc[idx]
                 current_jindie_name = mapped_jindie.iloc[idx]
                 df_pivot.at[idx, '供应商-金蝶'] = current_jindie_name
                 
-                # 根据“主体”与“金蝶名称”，精确反查主数据对应编码，彻底断绝错位
                 if current_jindie_name != "":
                     j_key = current_jindie_name.lower().strip()
                     if entity == 'CM':
@@ -228,7 +217,7 @@ if uploaded_files:
         df_pivot = df_pivot[pivot_cols]
         
         # ==========================================
-        # 按钮一：原有常规业务分析总表 (数据对齐加固)
+        # 按钮一：原有常规业务分析总表 (加入 SUMIF 看板和更正字样)
         # ==========================================
         wb_orig = openpyxl.Workbook()
         ws_orig = wb_orig.active
@@ -238,6 +227,7 @@ if uploaded_files:
         font_title = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
         font_header = Font(name="微软雅黑", size=10, bold=True, color="FFFFFF")
         font_total = Font(name="微软雅黑", size=11, bold=True, color="D32F2F")
+        font_board = Font(name="Arial", size=10, bold=True, color="1E6B52") # 财务看板专用字体
         font_body = Font(name="微软雅黑", size=10)
         
         fill_detail_title = PatternFill(start_color="2B4C7E", end_color="2B4C7E", fill_type="solid")
@@ -254,11 +244,16 @@ if uploaded_files:
             top=Side(style='medium', color='D32F2F'), bottom=Side(style='medium', color='D32F2F'),
             left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0')
         )
+        board_border = Border(
+            top=Side(style='thin', color='1E6B52'), bottom=Side(style='thin', color='1E6B52'),
+            left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0')
+        )
         
         detail_cols = ['投放渠道', '开户方', '广告户名', 'spent', '买量产品', '核算主体']
         detail_end = len(df_detail) + 3
         pivot_end = len(df_pivot) + 3
         
+        # 1. 左边底层总计行保持不动
         ws_orig.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
             cell = ws_orig.cell(row=1, column=c)
@@ -273,29 +268,44 @@ if uploaded_files:
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 
-        ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
-        for c in range(8, 8 + len(pivot_cols)):
-            cell = ws_orig.cell(row=1, column=c)
-            cell.border = total_border
-            if pivot_cols[c-8] == 'spent':
-                cell.value = f"=SUBTOTAL(9, J4:J{pivot_end})"
-                cell.font = font_total
-                cell.number_format = '#,##0.00'
-                cell.alignment = Alignment(horizontal="right", vertical="center")
-            elif c == 8:
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-            else:
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+        # 2. 【核心新增需求】：右边透视表上方的首行挂载 SUMIF 财务大盘
+        # 预留总计标签
+        ws_orig.cell(row=1, column=8, value="CM 额:").font = font_board
+        ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="right")
+        # I 列是主体，J 列是 spent 金额
+        cell_cm = ws_orig.cell(row=1, column=9, value=f'=SUMIF(I4:I{pivot_end}, "CM", J4:J{pivot_end})')
+        cell_cm.font = font_board
+        cell_cm.number_format = '#,##0.00'
         
+        ws_orig.cell(row=1, column=10, value="MH 额:").font = font_board
+        ws_orig.cell(row=1, column=10).alignment = Alignment(horizontal="right")
+        cell_mh = ws_orig.cell(row=1, column=11, value=f'=SUMIF(I4:I{pivot_end}, "MH", J4:J{pivot_end})')
+        cell_mh.font = font_board
+        cell_mh.number_format = '#,##0.00'
+        
+        ws_orig.cell(row=1, column=12, value="CM+MH TTL:").font = font_total
+        ws_orig.cell(row=1, column=12).alignment = Alignment(horizontal="right")
+        cell_ttl = ws_orig.cell(row=1, column=13, value=f'=I1+K1') # CM金额(I1) + MH金额(K1)
+        cell_ttl.font = font_total
+        cell_ttl.number_format = '#,##0.00'
+        
+        # 为上方看板刷上边框
+        for c in range(8, 8 + len(pivot_cols)):
+            ws_orig.cell(row=1, column=c).border = board_border
+            if ws_orig.cell(row=1, column=c).value is None:
+                ws_orig.cell(row=1, column=c).alignment = Alignment(horizontal="center", vertical="center")
+        
+        # 大标题合并区域
         ws_orig.merge_cells("A2:F2")
         ws_orig["A2"] = "投放费用明细表"
         ws_orig["A2"].font = font_title
         ws_orig["A2"].fill = fill_detail_title
         ws_orig["A2"].alignment = Alignment(horizontal="center", vertical="center")
         
+        # 【已经修改】：更正为「投放费用透视表」
         end_letter = openpyxl.utils.get_column_letter(7 + len(pivot_cols))
         ws_orig.merge_cells(f"H2:{end_letter}2")
-        ws_orig["H2"] = "投放费用透气表"
+        ws_orig["H2"] = "投放费用透视表"
         ws_orig["H2"].font = font_title
         ws_orig["H2"].fill = fill_pivot_title
         ws_orig["H2"].alignment = Alignment(horizontal="center", vertical="center")
@@ -353,7 +363,7 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：【给领导的汇总表】固定 6 页多 Sheet 纯流水
+        # 按钮二：【给领导的汇总表】保持纯净结构不动
         # ==========================================
         wb_leader = openpyxl.Workbook()
         wb_leader.remove(wb_leader.active)
