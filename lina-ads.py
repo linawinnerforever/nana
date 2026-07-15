@@ -97,9 +97,12 @@ with col_up2:
 
 if ad_files and mp_file:
     try:
-        # 加载供应商真理表字典
-        xls_mp = pd.ExcelFile(mp_file)
-        df_vendor = pd.read_excel(mp_file, sheet_name=xls_mp.sheet_names[0])
+        # 🌟 安全嗅探加载供应商表
+        try:
+            df_vendor = pd.read_excel(mp_file, sheet_name=0)
+        except:
+            df_vendor = pd.read_excel(mp_file, sheet_name=0, engine='openpyxl')
+            
         df_vendor.columns = df_vendor.columns.astype(str).str.strip()
         
         vendor_code_map = {}
@@ -118,24 +121,35 @@ if ad_files and mp_file:
         if st.button("🚀 启动全自动洗流并输出 CM & MH 专属做账资产"):
             master_raw_list = []
             has_error_flag = False
-            missing_vendors_set = set() # 动态收集新增服务商
+            missing_vendors_set = set()
             voucher_rows = []
             ent_id = 1
             
             # 循环清洗所有业务表格
             for file in ad_files:
-                filename_upper = file.name.upper()
-                xls_ad = pd.ExcelFile(file)
-                df_sheet_raw = pd.read_excel(file, sheet_name=xls_ad.sheet_names[0], header=None)
+                # 🌟【核心修复点】：采用智能动态安全流引擎读取，100%避开旧版 xlrd/openpyxl 格式歧义
+                try:
+                    df_sheet_raw = pd.read_excel(file, sheet_name=0, header=None)
+                except:
+                    try:
+                        df_sheet_raw = pd.read_excel(file, sheet_name=0, header=None, engine='openpyxl')
+                    except:
+                        # 兜底旧格式降级兼容
+                        df_sheet_raw = pd.read_excel(file, sheet_name=0, header=None, engine='xlrd')
                 
                 header_row_idx = 0
                 for r_idx, r_val in df_sheet_raw.iterrows():
                     r_strs = [str(v).strip() for v in r_val.values if pd.notna(v)]
-                    if "投放渠道" in r_strs or "项目" in r_strs:
+                    if "投放渠道" in r_strs or "项目" in r_strs or "买量产品" in r_strs:
                         header_row_idx = r_idx
                         break
-                        
-                df_clean = pd.read_excel(file, sheet_name=xls_ad.sheet_names[0], skiprows=header_row_idx)
+                
+                # 重新用锁定到的真实行首进行切片读取
+                try:
+                    df_clean = pd.read_excel(file, sheet_name=0, skiprows=header_row_idx)
+                except:
+                    df_clean = pd.read_excel(file, sheet_name=0, skiprows=header_row_idx, engine='openpyxl')
+                    
                 df_clean.columns = df_clean.columns.astype(str).str.strip()
                 
                 if "项目" in df_clean.columns:
@@ -159,19 +173,27 @@ if ad_files and mp_file:
                         continue
                     prod_meta = PRODUCT_MAIN_MAP[p_name]
                     
-                    # 金额清洗（纯正美元）
+                    # 金额清洗
                     spent_raw = row.get("spent", 0)
-                    spent_val = float(str(spent_raw).replace(",", "")) if pd.notna(spent_raw) and str(spent_raw).strip() != "" else 0.0
+                    spent_str = str(spent_raw).replace(",", "").strip()
+                    # 兼容可能存在的业务表格特殊符号减号
+                    spent_str = spent_str.replace("−", "-").replace("—", "-")
+                    
+                    try:
+                        spent_val = float(spent_str) if spent_str != "" else 0.0
+                    except:
+                        spent_val = 0.0
+                        
                     if spent_val == 0:
                         continue
                         
-                    # 🌟【逻辑一：供应商-渠道动态判定】
+                    # 供应商-渠道动态判定
                     if partner and partner != "nan" and partner != "(空白)":
                         supplier_channel = partner
                     else:
                         supplier_channel = channel
                         
-                    # 🌟【逻辑二：金蝶信息匹配与拦截警报提示】
+                    # 金蝶信息级联匹配
                     match_key = supplier_channel.strip().upper()
                     final_v_code = vendor_code_map.get(match_key, "")
                     final_v_kingdee = vendor_name_map.get(match_key, "")
@@ -182,7 +204,7 @@ if ad_files and mp_file:
                         has_error_flag = True
                         missing_vendors_set.add(supplier_channel)
                         
-                    # 🌟【逻辑三：摘要自适应英文拼接截断】
+                    # 摘要截断
                     if partner and partner != "nan" and partner != "(空白)":
                         explanation_str = f"计提{current_year}年{current_period}月推广费用-Jun.{current_year} advertising and marketing cost accrual-{channel}-{partner}"
                         partner_label = partner
@@ -190,7 +212,6 @@ if ad_files and mp_file:
                         explanation_str = f"计提{current_year}年{current_period}月推广费用-Jun.{current_year} advertising and marketing cost accrual-{channel}"
                         partner_label = "(空白)"
                         
-                    # 归集数据至全量底稿中
                     record = {
                         "买量产品": prod_meta["product_label"],
                         "投放渠道": channel,
@@ -205,7 +226,7 @@ if ad_files and mp_file:
                     }
                     master_raw_list.append(record)
                     
-                    # 🌟 组装金蝶凭证行（销售费用对冲应付账款）
+                    # 组装金蝶凭证行
                     base_info = {
                         'FBillHead(GL_VOUCHER)': 1, 'FAccountBookID': prod_meta["book_id"], 'FAccountBookID#Name': prod_meta["company_name"],
                         'FDate': voucher_date, 'FBUSDATE': voucher_date, 'FYEAR': int(current_year), 'FPERIOD': int(current_period),
@@ -238,7 +259,7 @@ if ad_files and mp_file:
                     ent_id += 1
 
             if not master_raw_list:
-                st.error("❌ 未从上传的计提表中过滤出符合主体的有效数据流水行。")
+                st.error("❌ 未能从这些 Excel 表格中清洗出任何属于指定主体的买量流数据。")
                 st.stop()
                 
             df_ledger = pd.DataFrame(master_raw_list)
@@ -246,17 +267,15 @@ if ad_files and mp_file:
             df_pivot = df_ledger.groupby(["主体", "买量产品", "供应商-金蝶"])["求和项:spent"].sum().reset_index()
             df_pivot.rename(columns={"求和项:spent": "总金额(USD)"}, inplace=True)
             
-            # 🌟【要求1提示要求】：如果有新增服务商未匹配，在网页界面给予刺眼大警报
             if has_error_flag:
                 st.error(f"🚨 【注意】检测到有 {len(missing_vendors_set)} 个新增的“供应商-渠道”在映射表里不存在：")
                 st.warning(f"缺失的渠道名为：{list(missing_vendors_set)}")
             else:
-                st.success("✨ 所有开户服务商无缝完美匹配！")
+                st.success("✨ 所有主体服务商无缝完美匹配！")
                 
-            st.markdown("#### 📊 当期 CM & MH 主体买量消耗分类看板")
+            st.markdown("#### 📊 当期买量消耗分类核对看板")
             st.dataframe(df_pivot, use_container_width=True)
             
-            # 写出多Sheet大包
             output_stream = io.BytesIO()
             with pd.ExcelWriter(output_stream, engine='xlsxwriter') as writer:
                 df_ledger.to_excel(writer, index=False, sheet_name='整理后入账底稿(todo)')
