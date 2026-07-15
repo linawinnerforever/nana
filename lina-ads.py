@@ -348,3 +348,19 @@ if uploaded_files:
         col1, col2 = st.columns(2)
         
         with col1:
+            st.info("📊 常规业务分析汇总表 (保留旧样式明细/透视)")
+            st.download_button(
+                label="点击下载新样式 Excel 报表",
+                data=excel_data_orig,
+                file_name=f"🤝投放费用汇总_对齐美化版_{current_month}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+        with col2:
+            st.success("👑 给领导的汇总表 (固定多Sheet + Chapters顶置 TTL 公式)")
+            st.download_button(
+                label="点击下载给领导的汇总表",
+                data=excel_data_leader,
+                file_name=f"推广费用-各主体情况汇总_{current_month}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
