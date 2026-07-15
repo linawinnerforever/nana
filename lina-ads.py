@@ -143,7 +143,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         # 【精准修正点】：项目段编码依照财务最新指示移回 FDetailID#FF100002（第 25 列）
         ws.cell(row=current_row, column=25, value=p_project)  
         
-        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5 (第49列：项目#编码 7000)
+        ws.cell(row=current_row, column=49, value="70000")  # FDetailID#FFlex5 (第49列：项目#编码 7000)
         ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
