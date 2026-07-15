@@ -130,7 +130,8 @@ if uploaded_files:
         detail_cols = list(df_detail.columns)
         for col_idx, col_name in enumerate(detail_cols, start=1):
             cell = ws.cell(row=2, column=col_idx, value=col_name)
-            cell.font = font_header.fill = fill_detail_hdr
+            cell.font = font_header
+            cell.fill = fill_detail_hdr
             cell.alignment = Alignment(horizontal="center", vertical="center")
             
         pivot_cols = list(df_pivot.columns)
