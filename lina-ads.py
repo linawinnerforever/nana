@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V24 (凭证无损版)")
-st.markdown("特性：**已在计提透视表上方新增 CM、MH、CM+MH 的动态 SUMIF 看板。** 修正了表头文字，供应商反查及三位项目编码完全锁定。")
+st.title("📊 投放费用月度数据汇总与透视工具 V26 (终极财务看板版)")
+st.markdown("特性：**第一行右侧看板文案已精简为『CM 额 (SUMIF):』与『MH 额 (SUMIF):』。** 样式与 SUBTOTAL 完美融合，干净整洁。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -217,7 +217,7 @@ if uploaded_files:
         df_pivot = df_pivot[pivot_cols]
         
         # ==========================================
-        # 按钮一：原有常规业务分析总表 (加入 SUMIF 看板和更正字样)
+        # 按钮一：原有常规业务分析总表 (大盘公式并联至第一行)
         # ==========================================
         wb_orig = openpyxl.Workbook()
         ws_orig = wb_orig.active
@@ -226,8 +226,7 @@ if uploaded_files:
         
         font_title = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
         font_header = Font(name="微软雅黑", size=10, bold=True, color="FFFFFF")
-        font_total = Font(name="微软雅黑", size=11, bold=True, color="D32F2F")
-        font_board = Font(name="Arial", size=10, bold=True, color="1E6B52") # 财务看板专用字体
+        font_total = Font(name="微软雅黑", size=11, bold=True, color="D32F2F") # 财务红
         font_body = Font(name="微软雅黑", size=10)
         
         fill_detail_title = PatternFill(start_color="2B4C7E", end_color="2B4C7E", fill_type="solid")
@@ -244,16 +243,12 @@ if uploaded_files:
             top=Side(style='medium', color='D32F2F'), bottom=Side(style='medium', color='D32F2F'),
             left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0')
         )
-        board_border = Border(
-            top=Side(style='thin', color='1E6B52'), bottom=Side(style='thin', color='1E6B52'),
-            left=Side(style='thin', color='E0E0E0'), right=Side(style='thin', color='E0E0E0')
-        )
         
         detail_cols = ['投放渠道', '开户方', '广告户名', 'spent', '买量产品', '核算主体']
         detail_end = len(df_detail) + 3
         pivot_end = len(df_pivot) + 3
         
-        # 1. 左边底层总计行保持不动
+        # 明细总计
         ws_orig.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
             cell = ws_orig.cell(row=1, column=c)
@@ -268,41 +263,52 @@ if uploaded_files:
             else:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 
-        # 2. 【核心新增需求】：右边透视表上方的首行挂载 SUMIF 财务大盘
-        # 预留总计标签
-        ws_orig.cell(row=1, column=8, value="CM 额:").font = font_board
-        ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="right")
-        # I 列是主体，J 列是 spent 金额
-        cell_cm = ws_orig.cell(row=1, column=9, value=f'=SUMIF(I4:I{pivot_end}, "CM", J4:J{pivot_end})')
-        cell_cm.font = font_board
-        cell_cm.number_format = '#,##0.00'
+        # 透视大盘总计平铺
+        ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
+        ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
         
-        ws_orig.cell(row=1, column=10, value="MH 额:").font = font_board
-        ws_orig.cell(row=1, column=10).alignment = Alignment(horizontal="right")
-        cell_mh = ws_orig.cell(row=1, column=11, value=f'=SUMIF(I4:I{pivot_end}, "MH", J4:J{pivot_end})')
-        cell_mh.font = font_board
-        cell_mh.number_format = '#,##0.00'
+        cell_orig_sub = ws_orig.cell(row=1, column=10)
+        cell_orig_sub.value = f"=SUBTOTAL(9, J4:J{pivot_end})"
+        cell_orig_sub.font = font_total
+        cell_orig_sub.number_format = '#,##0.00'
+        cell_orig_sub.alignment = Alignment(horizontal="right", vertical="center")
         
-        ws_orig.cell(row=1, column=12, value="CM+MH TTL:").font = font_total
-        ws_orig.cell(row=1, column=12).alignment = Alignment(horizontal="right")
-        cell_ttl = ws_orig.cell(row=1, column=13, value=f'=I1+K1') # CM金额(I1) + MH金额(K1)
-        cell_ttl.font = font_total
-        cell_ttl.number_format = '#,##0.00'
+        # 【已经精简】：仅保留 CM 额 与 MH 额 标签文案
+        ws_orig.cell(row=1, column=11, value="CM 额 (SUMIF):").font = font_total
+        ws_orig.cell(row=1, column=11).alignment = Alignment(horizontal="right", vertical="center")
         
-        # 为上方看板刷上边框
+        cell_cm_sumif = ws_orig.cell(row=1, column=12, value=f'=SUMIF(I4:I{pivot_end}, "CM", J4:J{pivot_end})')
+        cell_cm_sumif.font = font_total
+        cell_cm_sumif.number_format = '#,##0.00'
+        cell_cm_sumif.alignment = Alignment(horizontal="right", vertical="center")
+        
+        ws_orig.cell(row=1, column=13, value="MH 额 (SUMIF):").font = font_total
+        ws_orig.cell(row=1, column=13).alignment = Alignment(horizontal="right", vertical="center")
+        
+        cell_mh_sumif = ws_orig.cell(row=1, column=14, value=f'=SUMIF(I4:I{pivot_end}, "MH", J4:J{pivot_end})')
+        cell_mh_sumif.font = font_total
+        cell_mh_sumif.number_format = '#,##0.00'
+        cell_mh_sumif.alignment = Alignment(horizontal="right", vertical="center")
+        
+        ws_orig.cell(row=1, column=15, value="CM+MH的spent:").font = font_total
+        ws_orig.cell(row=1, column=15).alignment = Alignment(horizontal="right", vertical="center")
+        
+        cell_cm_mh_ttl = ws_orig.cell(row=1, column=16, value=f'=L1+N1') 
+        cell_cm_mh_ttl.font = font_total
+        cell_cm_mh_ttl.number_format = '#,##0.00'
+        cell_cm_mh_ttl.alignment = Alignment(horizontal="right", vertical="center")
+        
         for c in range(8, 8 + len(pivot_cols)):
-            ws_orig.cell(row=1, column=c).border = board_border
+            ws_orig.cell(row=1, column=c).border = total_border
             if ws_orig.cell(row=1, column=c).value is None:
                 ws_orig.cell(row=1, column=c).alignment = Alignment(horizontal="center", vertical="center")
         
-        # 大标题合并区域
         ws_orig.merge_cells("A2:F2")
         ws_orig["A2"] = "投放费用明细表"
         ws_orig["A2"].font = font_title
         ws_orig["A2"].fill = fill_detail_title
         ws_orig["A2"].alignment = Alignment(horizontal="center", vertical="center")
         
-        # 【已经修改】：更正为「投放费用透视表」
         end_letter = openpyxl.utils.get_column_letter(7 + len(pivot_cols))
         ws_orig.merge_cells(f"H2:{end_letter}2")
         ws_orig["H2"] = "投放费用透视表"
@@ -363,7 +369,7 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：【给领导的汇总表】保持纯净结构不动
+        # 按钮二：【给领导的汇总表】固定多 Sheet 纯流水 
         # ==========================================
         wb_leader = openpyxl.Workbook()
         wb_leader.remove(wb_leader.active)
@@ -448,7 +454,7 @@ if uploaded_files:
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
-        # UI端按钮下载
+        # UI端双通道按钮下载布局呈现
         st.markdown("---")
         if not mp_file:
             st.warning("⚠️ 提示：您尚未上传 MP 数据映射表，右侧金蝶核算维度字段将暂时显示为空白。")
