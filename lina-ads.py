@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V33 (金蝶核算绝对精准版)")
-st.markdown("特性：**已将项目编码精准改挂至 FDetailID#FF100002（第 25 列）。** 71列双行物理凭证与纯数字财务千分位完全合规。")
+st.title("📊 投放费用自动入账工具")
+st.markdown("特性：上传业务底表，自动输出汇总表&入账凭证")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -498,7 +498,7 @@ if uploaded_files:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口 (71列改挂对齐版)")
+        st.markdown("### 💰 金蝶云星空标准财务凭证一键导出")
         c_v1, c_v2 = st.columns(2)
         with c_v1:
             st.download_button(
