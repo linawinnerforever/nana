@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V29 (金蝶完美凭证版)")
-st.markdown("特性：**金蝶标准上传凭证已完全遵循 6 大硬核财务规范。** 支持摘要动态拼接、空置行留白及 7000 维度精准挂载。")
+st.title("📊 投放费用月度数据汇总与透视工具 V30 (金蝶接口终极加固版)")
+st.markdown("特性：**供应商编码已锁死填入 FFlex4 列。借贷金额强制为纯数字格式输出。** 表头描述列已全面置空留白。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -57,8 +57,7 @@ def load_mp_matrix(file):
         return None
 
 def build_jindie_voucher_strict(df_source, entity_name, month_str):
-    """根据最新 6 项要求构建完全一致的金蝶底层拉平凭证表"""
-    # 过滤出对应主体且有供应商映射的行
+    """根据最新的金蝶凭证接口硬核指标重组拉平结构"""
     df_filter = df_source[(df_source['核算主体'] == entity_name) & (df_source['供应商-金蝶'] != "")].copy()
     
     # 严格锁定的金蝶原始标准 65 列完整表头
@@ -81,22 +80,16 @@ def build_jindie_voucher_strict(df_source, entity_name, month_str):
         "FEXCHANGERATE", "FDEBIT", "FCREDIT"
     ]
     
-    # 英文月份标签简写
     en_months = {
         "1": "Jan", "2": "Feb", "3": "Mar", "4": "Apr", "5": "May", "6": "Jun",
         "7": "Jul", "8": "Aug", "9": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"
     }
     en_month_label = en_months.get(month_str, "Month")
     
-    # 根据主体类型确定专属编码
     book_id = "002" if entity_name == "CM" else "005"
     org_id = "100" if entity_name == "CM" else "103"
-    book_name = "CMS账簿" if entity_name == "CM" else "MH账簿"
-    org_name = "Crazy Maple Studio, Inc." if entity_name == "CM" else "Maple House Inc"
     
     rows = []
-    
-    # 按照项目 + 渠道 + 开户方聚合进行一借一贷拆分
     df_grouped = df_filter.groupby(['项目', '投放渠道', '开户方', '供应商-金蝶', '供应商编码'], dropna=False)
     
     for idx, (group_keys, group_data) in enumerate(df_grouped, start=1):
@@ -105,74 +98,71 @@ def build_jindie_voucher_strict(df_source, entity_name, month_str):
         if p_spent <= 0:
             continue
             
-        # 规则 3：复合动态摘要拼接
         if str(p_kf).strip() != "":
             explanation = f"计提2026年{month_str}月推广费用- {en_month_label}.2026 advertising and marketing cost accrual-{p_channel}-{p_kf}"
         else:
             explanation = f"计提2026年{month_str}月推广费用- {en_month_label}.2026 advertising and marketing cost accrual-{p_channel}"
             
-        amt_formatted = f"{p_spent:,.2f}" # 保留两位小数并附带千分位
-        
-        # 构建通用的基础列骨架
+        # 建立通用基础空白骨架
         base_row = {h: "" for h in jindie_headers}
         
-        # 规则 4 & 5：只有整个分录的第一行（即 idx==1 的借方行）需要填充 A-R 列头信息
+        # 仅分录第一行的 A-R 填充列头，其余行和描述字段遵循指示保持空白留空
         if idx == 1:
             base_row.update({
-                'FBillHead(GL_VOUCHER)': '1',
+                'FBillHead(GL_VOUCHER)': '1', # 强置为 1
                 'FAccountBookID': book_id,
-                'FAccountBookID#Name': book_name,
+                'FAccountBookID#Name': "",     # 规则 3：置空
                 'FDate': f"2026-{month_str.zfill(2)}-30",
                 'FBUSDATE': f"2026-{month_str.zfill(2)}-30",
                 'FYEAR': "2026",
                 'FPERIOD': month_str,
                 'FVOUCHERGROUPID': "PRE001",
-                'FVOUCHERGROUPID#Name': "", # 规则 5：留空
+                'FVOUCHERGROUPID#Name': "",
                 'FVOUCHERGROUPNO': "1",
-                'FATTACHMENTS': "1",
-                'FISADJUSTVOUCHER': "0",
+                'FATTACHMENTS': "",            # 规则 3：置空
+                'FISADJUSTVOUCHER': "",         # 规则 3：置空
                 'FACCBOOKORGID': org_id,
-                'FACCBOOKORGID#Name': org_name,
+                'FACCBOOKORGID#Name': "",      # 规则 3：置空
                 'FSourceBillKey': "", 'FSourceBillKey#Name': "", 'FIMPORTVERSION': "", '*Split*1': ""
             })
             
         # ----------------------------------------------------
-        # 1. 产生借方行分录 (6601.03.01)
+        # 1. 产生借方成本行 (6601.03.01)
         # ----------------------------------------------------
         row_dr = base_row.copy()
         row_dr.update({
             'FEntity': str((idx - 1) * 2 + 1),
             'FEXPLANATION': explanation,
             'FACCOUNTID': '6601.03.01',
-            'FACCOUNTID#Name': "", # 规则 4：无需填写
-            'FDetailID#FFLEX14': p_project, # 项目编码挂载在 FFLEX14
-            'FDetailID#FFlex5': "7000",     # 规则 6：7000填入6601.03.01的 FFlex5 处
+            'FACCOUNTID#Name': "",
+            'FDetailID#FFLEX14': p_project, # 项目编码位置
+            'FDetailID#FFlex5': "7000",     # 7000填入6601.03.01的 FFlex5 处
             'FCURRENCYID': 'PRE007',
             'FCURRENCYID#Name': '美元',
             'FEXCHANGERATETYPE': 'HLTX01_SYS',
             'FEXCHANGERATETYPE#Name': '固定汇率',
-            'FEXCHANGERATE': '1',
-            'FDEBIT': amt_formatted,        # 规则 2：借方录入金额
+            'FEXCHANGERATE': 1,
+            'FDEBIT': round(p_spent, 2),    # 规则 2：纯数字格式类型
             'FCREDIT': ""                   # 规则 2：贷方为空
         })
         
         # ----------------------------------------------------
-        # 2. 产生贷方行分录 (2202.02)
+        # 2. 产生贷方应付行 (2202.02)
         # ----------------------------------------------------
-        row_cr = {h: "" for h in jindie_headers} # 后续的分录行 A-R 完全留空白
+        row_cr = {h: "" for h in jindie_headers}
         row_cr.update({
             'FEntity': str((idx - 1) * 2 + 2),
             'FEXPLANATION': explanation,
             'FACCOUNTID': '2202.02',
-            'FACCOUNTID#Name': "", # 无需填写
-            'FDetailID#FFlex5': p_code,     # 供应商编码挂载在贷方的 FFlex5 位置
+            'FACCOUNTID#Name': "",
+            'FDetailID#FFlex4': p_code,     # 规则 1：供应商编码精确改填入 FDetailID#FFlex4 列
             'FCURRENCYID': 'PRE007',
             'FCURRENCYID#Name': '美元',
             'FEXCHANGERATETYPE': 'HLTX01_SYS',
             'FEXCHANGERATETYPE#Name': '固定汇率',
-            'FEXCHANGERATE': '1',
+            'FEXCHANGERATE': 1,
             'FDEBIT': "",                   # 规则 2：借方为空
-            'FCREDIT': amt_formatted        # 规则 2：贷方录入金额
+            'FCREDIT': round(p_spent, 2)    # 规则 2：纯数字格式类型
         })
         
         rows.extend([row_dr, row_cr])
@@ -485,7 +475,7 @@ if uploaded_files:
         # ==========================================
         clean_m_str = month_label.replace("月", "") 
         
-        # 严格执行规则构建凭证拉平格式
+        # 借贷金额改为纯数字，格式及字段名称完全校准
         df_cm_voucher = build_jindie_voucher_strict(df_pivot, "CM", clean_m_str)
         excel_cm_v = io.BytesIO()
         with pd.ExcelWriter(excel_cm_v, engine='openpyxl') as writer:
@@ -499,7 +489,7 @@ if uploaded_files:
         excel_mh_v.seek(0)
 
         # ==========================================
-        # 4. 前端一键分流呈现下载
+        # 4. 前端按钮渲染呈现
         # ==========================================
         st.markdown("---")
         st.markdown("### 📥 基础业务与高管总表下载")
