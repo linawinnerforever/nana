@@ -7,15 +7,15 @@ import io
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V8")
-st.markdown("说明：保留了原有的报表下载；同时根据您的底表，额外独立生成了一张专供领导的高管级汇总 Excel 表。")
+st.title("📊 投放费用月度数据汇总与透视工具 V9")
+st.markdown("特性：右侧『给领导的汇总表』已完全按照您底表的字段样式克隆，且『期间/日期』支持上传文件后自动识别并更新。")
 
 uploaded_files = st.file_uploader("上传业务计提表 (可多选 Excel 文件)", type=["xlsx", "xls"], accept_multiple_files=True)
 
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
-    'maxdrama': {'product': 'MaxDrama', 'entity': 'NL'},
+    'maxdrama': {'product': 'MaxDrama', 'entity': 'NL'}, # 根据新底表保持NL或原逻辑
     'merge': {'product': 'Merge', 'entity': 'CM'},
     'reelshort': {'product': 'Reelshort', 'entity': 'NL'},
     'rsnovel': {'product': 'RS N', 'entity': 'NL'}
@@ -23,6 +23,8 @@ PRODUCT_MAPPING = {
 
 def process_data(files):
     all_data = []
+    detected_period = "月度" # 默认兜底名称
+    
     for f in files:
         fname = f.name.lower()
         prod_info = None
@@ -37,35 +39,53 @@ def process_data(files):
             df_check = pd.read_excel(f, nrows=10)
             header_row = 0
             for i, row in df_check.iterrows():
-                if '投放渠道' in row.values or 'spent' in row.values:
+                if '投放渠道' in row.values or 'spent' in row.values or '消耗' in row.values:
                     header_row = i + 1
                     break
             
             df = pd.read_excel(f, skiprows=header_row)
             df.columns = [str(c).strip() for c in df.columns]
             
-            if 'spent' not in df.columns:
+            # 兼容底表可能叫 spent 或 消耗 的情况
+            amt_col = 'spent' if 'spent' in df.columns else ('消耗' if '消耗' in df.columns else None)
+            if not amt_col:
                 continue
                 
-            df = df[df['spent'].notna()]
-            df['spent_num'] = pd.to_numeric(df['spent'], errors='coerce')
+            df = df[df[amt_col].notna()]
+            df['spent_num'] = pd.to_numeric(df[amt_col], errors='coerce')
             df = df[df['spent_num'].notna()]
             df = df[df['spent_num'] > 0]
-            if '投放渠道' in df.columns:
-                df = df[~df['投放渠道'].astype(str).str.contains('合计|Total', na=False)]
+            
+            # 过滤合计行
+            channel_col = '投放渠道' if '投放渠道' in df.columns else df.columns[0]
+            df = df[~df[channel_col].astype(str).str.contains('合计|Total', na=False)]
             
             processed_df = pd.DataFrame()
+            
+            # 提取期间用于自动更新日期
+            if '期间' in df.columns and not df['期间'].empty:
+                valid_periods = df['期间'].dropna().astype(str).unique()
+                if len(valid_periods) > 0:
+                    detected_period = valid_periods[0]
+            
+            processed_df['期间'] = df['期间'].fillna(detected_period) if '期间' in df.columns else detected_period
             processed_df['投放渠道'] = df['投放渠道'].fillna('').astype(str).str.strip()
             
-            if '开户方' in df.columns:
-                processed_df['开户方'] = df['开户方'].fillna('').astype(str).str.strip()
-            elif '开户服务商' in df.columns:
-                processed_df['开户方'] = df['开户服务商'].fillna('').astype(str).str.strip()
+            if '开户服务商' in df.columns:
+                processed_df['开户服务商'] = df['开户服务商'].fillna('').astype(str).str.strip()
+            elif '开户方' in df.columns:
+                processed_df['开户服务商'] = df['开户方'].fillna('').astype(str).str.strip()
             else:
-                processed_df['开户方'] = ''
+                processed_df['开户服务商'] = ''
                 
             processed_df['广告户名'] = df['广告户名'].fillna('').astype(str).str.strip() if '广告户名' in df.columns else ''
+            processed_df['类别'] = df['类别'].fillna('自投').astype(str).str.strip() if '类别' in df.columns else '自投'
+            processed_df['代投服务商'] = df['代投服务商'].fillna('').astype(str).str.strip() if '代投服务商' in df.columns else ''
+            
             processed_df['spent'] = df['spent_num']
+            processed_df['代投费'] = pd.to_numeric(df['代投费'], errors='coerce').fillna(0) if '代投费' in df.columns else 0
+            processed_df['投放待结算'] = processed_df['spent'] + processed_df['代投费']
+            
             processed_df['买量产品'] = prod_info['product']
             processed_df['核算主体'] = prod_info['entity']
             
@@ -73,17 +93,21 @@ def process_data(files):
         except Exception as e:
             st.error(f"处理文件 {f.name} 时出错: {str(e)}")
             
-    return pd.concat(all_data, ignore_index=True) if all_data else None
+    if all_data:
+        full_df = pd.concat(all_data, ignore_index=True)
+        return full_df, detected_period
+    return None, detected_period
 
 if uploaded_files:
     with st.spinner("正在汇总数据..."):
-        df_detail = process_data(uploaded_files)
+        df_detail, current_month = process_data(uploaded_files)
         
     if df_detail is not None:
-        st.success("🎉 数据合并完成！请在下方选择您需要下载的 Excel 文件：")
+        st.success(f"🎉 数据合并完成！已自动识别并更新当前数据期间为：【{current_month}】")
         
-        # 基础透视数据准备
-        df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户方'], as_index=False, dropna=False)['spent'].sum()
+        # 基础透视数据准备（保留旧版按钮所需）
+        df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['spent'].sum()
+        df_pivot.rename(columns={'开户服务商': '开户方'}, inplace=True)
         df_pivot = df_pivot[['买量产品', '核算主体', 'spent', '投放渠道', '开户方']]
         
         # ==========================================
@@ -172,7 +196,7 @@ if uploaded_files:
             cell.fill = fill_pivot_hdr
             cell.alignment = Alignment(horizontal="center", vertical="center")
             
-        for r_idx, row in enumerate(dataframe_to_rows(df_detail[detail_cols], index=False, header=False), start=4):
+        for r_idx, row in enumerate(dataframe_to_rows(df_detail.rename(columns={'开户服务商': '开户方'})[detail_cols], index=False, header=False), start=4):
             for c_idx, val in enumerate(row, start=1):
                 cell = ws_orig.cell(row=r_idx, column=c_idx, value=val)
                 cell.font = font_body
@@ -211,135 +235,100 @@ if uploaded_files:
         excel_data_orig.seek(0)
 
         # ==========================================
-        # 按钮二：独立生成“给领导的汇总表” (全新生成独立Excel)
+        # 按钮二：【给领导的汇总表】完全克隆原厂底表结构
         # ==========================================
         wb_leader = openpyxl.Workbook()
         ws_leader = wb_leader.active
-        ws_leader.title = "领导审阅汇总"
+        ws_leader.title = "各主体情况汇总"
         ws_leader.views.sheetView[0].showGridLines = True
         
-        # 领导偏好的沉稳大气风格
-        font_l_title = Font(name="微软雅黑", size=14, bold=True, color="333333")
-        font_l_hdr = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
-        font_l_body = Font(name="微软雅黑", size=11, color="000000")
-        font_l_total = Font(name="微软雅黑", size=11, bold=True, color="B00020")
+        # 定义与原本一致的样式格式
+        font_leader_hdr = Font(name="微软雅黑", size=10, bold=True)
+        font_leader_body = Font(name="微软雅黑", size=10)
+        font_leader_top = Font(name="Arial", size=11, bold=True)
         
-        fill_l_hdr = PatternFill(start_color="34495E", end_color="34495E", fill_type="solid") # 绅士灰蓝
-        fill_l_zebra = PatternFill(start_color="F8F9F9", end_color="F8F9F9", fill_type="solid")
-        fill_l_total = PatternFill(start_color="EAEDED", end_color="EAEDED", fill_type="solid")
+        align_center = Alignment(horizontal="center", vertical="center")
+        align_right = Alignment(horizontal="right", vertical="center")
         
-        b_thin = Side(style='thin', color='BDC3C7')
-        b_double = Side(style='double', color='333333')
-        b_thick = Side(style='medium', color='333333')
+        leader_thin_border = Border(
+            left=Side(style='thin', color='CCCCCC'), right=Side(style='thin', color='CCCCCC'),
+            top=Side(style='thin', color='CCCCCC'), bottom=Side(style='thin', color='CCCCCC')
+        )
         
-        border_l_cell = Border(left=b_thin, right=b_thin, top=b_thin, bottom=b_thin)
-        border_l_total = Border(left=b_thin, right=b_thin, top=b_thick, bottom=b_double)
-
-        # 1. 铺设大标题
-        ws_leader.cell(row=2, column=2, value="📊 推广费用各主体及产品消耗情况汇总表").font = font_l_title
+        # 严格对应底表的11列顺序
+        leader_headers = ["期间", "投放渠道", "开户服务商", "广告户名", "类别", "代投服务商", "消耗", "代投费", "投放待结算", "买量产品", "核算主体"]
         
-        # 2. 核心聚合数据：给领导看的数据颗粒度通常到 产品 + 核算主体 + 渠道
-        df_l_summary = df_detail.groupby(['买量产品', '核算主体', '投放渠道'], as_index=False)['spent'].sum()
-        df_l_summary = df_l_summary.sort_values(by=['买量产品', 'spent'], ascending=[True, False])
+        # 构建完全拉平且汇总好的底层明细数据
+        df_leader_final = df_detail[leader_headers].copy()
         
-        # ！！在此处定义输出给领导汇总表的列名结构 (可根据您的喜好自由微调文字)！！
-        headers_leader = ["买量产品", "核算主体", "投放渠道", "消耗金额 (USD)"]
+        # 按照底表排版：
+        # Row 1: 第一行放置总金额汇总 (在“消耗”和“投放待结算”列上方填入合计公式)
+        data_end_row = len(df_leader_final) + 3
+        ws_leader.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_leader_top
+        ws_leader.cell(row=1, column=7).number_format = '#,##0.00'
+        ws_leader.cell(row=1, column=7).alignment = align_right
         
-        for c_idx, h_text in enumerate(headers_leader, start=2):
-            cell = ws_leader.cell(row=4, column=c_idx, value=h_text)
-            cell.font = font_l_hdr
-            cell.fill = fill_l_hdr
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = border_l_cell
-        ws_leader.row_dimensions[4].height = 28
+        ws_leader.cell(row=1, column=9, value=f"=SUM(I4:I{data_end_row})").font = font_leader_top
+        ws_leader.cell(row=1, column=9).number_format = '#,##0.00'
+        ws_leader.cell(row=1, column=9).alignment = align_right
         
-        # 3. 循环写入数据并追加小计
-        l_curr_row = 5
-        for prod, group in df_l_summary.groupby('买量产品'):
-            group_start = l_curr_row
-            
-            for _, row in group.iterrows():
-                ws_leader.cell(row=l_curr_row, column=2, value=row['买量产品']).alignment = Alignment(horizontal="center", vertical="center")
-                ws_leader.cell(row=l_curr_row, column=3, value=row['核算主体']).alignment = Alignment(horizontal="center", vertical="center")
-                ws_leader.cell(row=l_curr_row, column=4, value=row['投放渠道']).alignment = Alignment(horizontal="center", vertical="center")
+        # Row 2: 留空或分割行 (遵照底表第二行)
+        ws_leader.row_dimensions[1].height = 22
+        ws_leader.row_dimensions[2].height = 15
+        
+        # Row 3: 真正的表头行
+        for idx, h_name in enumerate(leader_headers, 1):
+            cell = ws_leader.cell(row=3, column=idx, value=h_name)
+            cell.font = font_leader_hdr
+            cell.alignment = align_center
+            cell.border = leader_thin_border
+        ws_leader.row_dimensions[3].height = 24
+        
+        # Row 4 起：逐行填充来自所有底表清洗完的数据
+        for r_idx, row in enumerate(dataframe_to_rows(df_leader_final, index=False, header=False), start=4):
+            for c_idx, val in enumerate(row, start=1):
+                cell = ws_leader.cell(row=r_idx, column=c_idx, value=val)
+                cell.font = font_body
+                cell.border = leader_thin_border
                 
-                cell_amt = ws_leader.cell(row=l_curr_row, column=5, value=row['spent'])
-                cell_amt.number_format = '#,##0.00'
-                cell_amt.alignment = Alignment(horizontal="right", vertical="center")
-                
-                for c in range(2, 6):
-                    t_cell = ws_leader.cell(row=l_curr_row, column=c)
-                    t_cell.font = font_l_body
-                    t_cell.border = border_l_cell
-                    if l_curr_row % 2 == 0:
-                        t_cell.fill = fill_l_zebra
-                l_curr_row += 1
-                
-            # 产品级小计行
-            ws_leader.cell(row=l_curr_row, column=2, value=f"{prod} 合计").alignment = Alignment(horizontal="left", vertical="center")
-            cell_sub = ws_leader.cell(row=l_curr_row, column=5, value=f"=SUM(E{group_start}:E{l_curr_row-1})")
-            cell_sub.number_format = '#,##0.00'
-            cell_sub.alignment = Alignment(horizontal="right", vertical="center")
+                # 判断是否为金额列，进行右对齐和千分位格式化
+                if leader_headers[c_idx-1] in ["消耗", "代投费", "投放待结算"]:
+                    cell.number_format = '#,##0.00'
+                    cell.alignment = align_right
+                else:
+                    cell.alignment = align_center
+            ws_leader.row_dimensions[r_idx].height = 20
             
-            for c in range(2, 6):
-                t_cell = ws_leader.cell(row=l_curr_row, column=c)
-                t_cell.font = font_l_total
-                t_cell.fill = fill_l_total
-                t_cell.border = border_l_total
-            ws_leader.row_dimensions[l_curr_row].height = 24
-            l_curr_row += 2 # 留出空行，使排版更具呼吸感
-            
-        # 4. 全盘总计行
-        ws_leader.cell(row=l_curr_row, column=2, value="总计 (Grand Total)").alignment = Alignment(horizontal="left", vertical="center")
-        # 稳健求和：明细值加总
-        cell_grand = ws_leader.cell(row=l_curr_row, column=5, value=f"=SUM(E5:E{l_curr_row-2})/2") 
-        # 更加直观的做法是直接把刚才所有的小计行抓出来求和
-        subtotal_formula_parts = [f"E{r}" for r in range(5, l_curr_row-1) if "合计" in str(ws_leader.cell(row=r, column=2).value)]
-        if subtotal_formula_parts:
-            cell_grand.value = f"=SUM({','.join(subtotal_formula_parts)})"
-            
-        cell_grand.number_format = '#,##0.00'
-        cell_grand.alignment = Alignment(horizontal="right", vertical="center")
-        
-        for c in range(2, 6):
-            t_cell = ws_leader.cell(row=l_curr_row, column=c)
-            t_cell.font = font_l_total
-            t_cell.fill = fill_l_total
-            t_cell.border = border_l_total
-        ws_leader.row_dimensions[l_curr_row].height = 26
-        
-        # 5. 自动算列宽
+        # 自动调整列宽
         for col in ws_leader.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = openpyxl.utils.get_column_letter(col[0].column)
-            if col_letter != 'A':
-                ws_leader.column_dimensions[col_letter].width = max(max_len + 5, 16)
-        ws_leader.column_dimensions['A'].width = 3
-        
+            ws_leader.column_dimensions[col_letter].width = max(max_len + 3, 13)
+            
         excel_data_leader = io.BytesIO()
         wb_leader.save(excel_data_leader)
         excel_data_leader.seek(0)
         
         # ==========================================
-        # Streamlit 界面双按钮独立渲染
+        # 界面双下载按钮呈现
         # ==========================================
         st.markdown("---")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.info("常规业务报表（包含您原有的样式与完整的明细/透视）")
+            st.info("📊 常规业务分析汇总表")
             st.download_button(
                 label="点击下载新样式 Excel 报表",
                 data=excel_data_orig,
-                file_name="🤝投放费用汇总_对齐美化版.xlsx",
+                file_name=f"🤝投放费用汇总_对齐美化版_{current_month}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
         with col2:
-            st.success("专属管理层报表（干净利落的高管视角汇总表）")
+            st.success("👑 专属管理层汇报汇总表 (完全依照原厂底表样式结构)")
             st.download_button(
-                label="👑 点击下载给领导的汇总表",
+                label="点击下载给领导的汇总表",
                 data=excel_data_leader,
-                file_name="📊2026年5月推广费用-各主体情况汇总-给领导审阅.xlsx",
+                file_name=f"{current_month}推广费用-各主体情况汇总.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
