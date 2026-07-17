@@ -215,15 +215,13 @@ if source_file and ratio_file:
                         
                     orig_amt = float(row['待拆分金额_numeric'])
                     cc_code = None
-                    vendor_code = None  # 用于存储提取出来的供应商编码
+                    vendor_code = None
                     
                     parts = dim_code.split('/')
                     for p in parts:
                         p_clean = p.strip()
-                        # 识别成本中心
                         if p_clean in df_ratio['成本中心编号'].astype(str).str.strip().values:
                             cc_code = p_clean
-                        # 🌟 新增逻辑：提取以 VEN 开头的供应商编码
                         if p_clean.upper().startswith('VEN'):
                             vendor_code = p_clean
                             
@@ -265,7 +263,6 @@ if source_file and ratio_file:
                     
                     if 'FDetailID#FF100002' in tech_headers: neg_row[tech_headers.index('FDetailID#FF100002')] = '006'
                     if 'FDetailID#FFlex5' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
-                    # 🌟 写入冲销行的供应商编码
                     if vendor_code and 'FDetailID#FFlex4' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex4')] = vendor_code
                     
                     new_rows.append(neg_row)
@@ -299,7 +296,6 @@ if source_file and ratio_file:
                         
                         if 'FDetailID#FF100002' in tech_headers: pos_row[tech_headers.index('FDetailID#FF100002')] = p_row.proj_code
                         if 'FDetailID#FFlex5' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
-                        # 🌟 写入分配行的供应商编码
                         if vendor_code and 'FDetailID#FFlex4' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex4')] = vendor_code
                         
                         new_rows.append(pos_row)
@@ -323,4 +319,7 @@ if source_file and ratio_file:
                     file_name=f"金蝶云星空重分类凭证-{selected_company}-{chosen_currency['id']}-{voucher_date}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-        st.info("💡 请在上方上传费用表与分摊比例表格。")
+    except Exception as e:
+        st.error(f"处理发生意外错误: {e}")
+else:
+    st.info("💡 请在上方上传费用表与分摊比例表格。")
