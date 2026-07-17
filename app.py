@@ -128,7 +128,6 @@ if source_file and ratio_file:
             df_check = pd.read_excel(source_file, sheet_name=sheet, header=None)
             for idx, row in df_check.iterrows():
                 row_strs = [str(v).strip() for v in row.values if pd.notna(v)]
-                # 只要有一行里包含“待拆分”或“金额”相关核心字眼，即视为表头行
                 if any("待拆分" in s or "待拆分金额" in s for s in row_strs):
                     valid_src_sheet = sheet
                     tb_header_idx = idx
@@ -137,7 +136,6 @@ if source_file and ratio_file:
         df_source = pd.read_excel(source_file, sheet_name=valid_src_sheet, skiprows=tb_header_idx)
         df_source.columns = df_source.columns.astype(str).str.strip()
         
-        # 智能锁定“待拆分金额”列名（容忍用户改名或带空格）
         amt_col = None
         for col in df_source.columns:
             if "待拆分" in col:
@@ -217,12 +215,18 @@ if source_file and ratio_file:
                         
                     orig_amt = float(row['待拆分金额_numeric'])
                     cc_code = None
+                    vendor_code = None  # 用于存储提取出来的供应商编码
+                    
                     parts = dim_code.split('/')
                     for p in parts:
                         p_clean = p.strip()
+                        # 识别成本中心
                         if p_clean in df_ratio['成本中心编号'].astype(str).str.strip().values:
                             cc_code = p_clean
-                            break
+                        # 🌟 新增逻辑：提取以 VEN 开头的供应商编码
+                        if p_clean.upper().startswith('VEN'):
+                            vendor_code = p_clean
+                            
                     if not cc_code and dim_code in df_ratio['成本中心编号'].astype(str).str.strip().values:
                         cc_code = dim_code
                     
@@ -261,6 +265,8 @@ if source_file and ratio_file:
                     
                     if 'FDetailID#FF100002' in tech_headers: neg_row[tech_headers.index('FDetailID#FF100002')] = '006'
                     if 'FDetailID#FFlex5' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
+                    # 🌟 写入冲销行的供应商编码
+                    if vendor_code and 'FDetailID#FFlex4' in tech_headers: neg_row[tech_headers.index('FDetailID#FFlex4')] = vendor_code
                     
                     new_rows.append(neg_row)
                     entry_idx += 1
@@ -293,6 +299,8 @@ if source_file and ratio_file:
                         
                         if 'FDetailID#FF100002' in tech_headers: pos_row[tech_headers.index('FDetailID#FF100002')] = p_row.proj_code
                         if 'FDetailID#FFlex5' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex5')] = cc_code
+                        # 🌟 写入分配行的供应商编码
+                        if vendor_code and 'FDetailID#FFlex4' in tech_headers: pos_row[tech_headers.index('FDetailID#FFlex4')] = vendor_code
                         
                         new_rows.append(pos_row)
                         entry_idx += 1
@@ -315,7 +323,4 @@ if source_file and ratio_file:
                     file_name=f"金蝶云星空重分类凭证-{selected_company}-{chosen_currency['id']}-{voucher_date}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-    except Exception as e:
-        st.error(f"处理发生意外错误: {e}")
-else:
-    st.info("💡 请在上方上传费用表与分摊比例表格。")
+        st.info("💡 请在上方上传费用表与分摊比例表格。")
