@@ -173,7 +173,7 @@ def build_kingdee_voucher(draft_file_obj, date_str):
     output_stream = io.BytesIO()
     
     with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
-        out_df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+        out_df.to_excel(writer, index=False, header=False, sheet_name='凭证#单据头(FBillHead)')
         worksheet = writer.sheets['Sheet1']
         
         # 强制设置整列或单元格为文本格式 (Format '@')
