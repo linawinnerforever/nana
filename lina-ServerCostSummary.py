@@ -221,7 +221,7 @@ def build_server_summary_voucher(draft_file_obj, date_str):
     return output_stream.getvalue(), entry_seq - 1, round(total_debit_grand_sum, 2)
 
 # --- Streamlit 网页前端界面 ---
-st.title("📊 服务器成本分摊汇总凭证生成工具")
+st.title("📊 服务器成本金蝶入账凭证生成工具")
 
 uploaded_file = st.file_uploader("请选择或拖入当月【测试服务器成本分摊汇总表】Excel 文件", type=["xlsx", "xls"])
 voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 8, 31))
