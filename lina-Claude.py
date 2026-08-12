@@ -124,7 +124,7 @@ def build_kingdee_voucher(draft_file_obj, date_str):
             np.nan, np.nan, np.nan, np.nan, np.nan, # 35-39
             np.nan, np.nan, np.nan, np.nan, np.nan, # 40-44
             np.nan, np.nan, np.nan,                 # 45-47
-            item['dept_code'],                      # 48: FDetailID#FFlex5 (分录)部门#编码 (成本中心编码)
+            item['dept_code'],                      # 48: FDetailID#FFlex5 (分录)部门#编码
             np.nan,                                 # 49
             'VEN02027',                             # 50: FDetailID#FFlex4 (分录)供应商#编码
             np.nan, np.nan, np.nan, np.nan, np.nan, # 51-55
@@ -134,9 +134,9 @@ def build_kingdee_voucher(draft_file_obj, date_str):
             '固定汇率',                             # 59: FEXCHANGERATETYPE#Name (分录)汇率类型#名称
             1,                                      # 60: FEXCHANGERATE (分录)汇率
             np.nan, np.nan, np.nan, np.nan,         # 61-64
-            amt,                                    # 65: FAMOUNTFOR 原币金额
+            np.nan,                                 # 65: FAMOUNTFOR 原币金额 (留空)
             amt,                                    # 66: FDEBIT 借方金额
-            np.nan,                                 # 67: FCREDIT 贷方金额 (6401.21为空)
+            np.nan,                                 # 67: FCREDIT 贷方金额 (为空)
             np.nan, np.nan, np.nan, np.nan, np.nan  # 68-72
         ]
         result_rows.append(row)
@@ -161,8 +161,8 @@ def build_kingdee_voucher(draft_file_obj, date_str):
         '固定汇率',                                 # 59: 汇率类型名称
         1,                                          # 60: 汇率
         np.nan, np.nan, np.nan, np.nan,
-        total_debit_amount,                         # 65: 原币金额
-        np.nan,                                     # 66: 借方金额 (贷方行为空)
+        np.nan,                                     # 65: FAMOUNTFOR 原币金额 (留空)
+        np.nan,                                     # 66: 借方金额 (为空)
         total_debit_amount,                         # 67: FCREDIT 贷方金额
         np.nan, np.nan, np.nan, np.nan, np.nan
     ]
