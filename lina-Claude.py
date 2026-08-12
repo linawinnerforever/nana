@@ -195,7 +195,7 @@ def build_kingdee_voucher(draft_file_obj, date_str):
     return output_stream, entry_seq, total_debit_amount
 
 # --- Streamlit 网页前端界面 ---
-st.title("📊 金蝶入账凭证生成工具")
+st.title("📊 Claude金蝶入账凭证生成工具")
 
 uploaded_file = st.file_uploader("请选择或拖入当月【Claude拆分底稿】Excel 文件", type=["xlsx", "xls"])
 voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 7, 31))
