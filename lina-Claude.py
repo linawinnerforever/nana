@@ -31,7 +31,7 @@ def build_kingdee_voucher(draft_file_obj, date_str):
         if val != 'nan' and val != '' and val.isdigit():
             data_cols.append((col_idx, val.zfill(3)))
             
-    # 查找成本中心数据行（成本中心编码在第1列，从第3行/第4列数据开始）
+    # 查找成本中心数据行（成本中心编码在第1列，从第3行开始）
     rows_data = []
     for r in range(3, len(df_raw)):
         dept_code = df_raw.iloc[r, 1]
@@ -95,37 +95,76 @@ def build_kingdee_voucher(draft_file_obj, date_str):
     total_debit_amount = 0.0
     entry_seq = 1
 
-    # 4. 生成借方分录
+    # 4. 生成借方分录 (科目 6401.21)
     for item in rows_data:
         amt = item['amount']
         total_debit_amount += amt
         is_first = (entry_seq == 1)
         row = [
-            1 if is_first else np.nan, '002' if is_first else np.nan, np.nan,
-            date_formatted if is_first else np.nan, date_formatted if is_first else np.nan,
-            year if is_first else np.nan, month if is_first else np.nan,
-            'PRE001' if is_first else np.nan, np.nan, 1 if is_first else np.nan,
-            np.nan, np.nan, 100 if is_first else np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            entry_seq, explanation, '6401.21', np.nan, np.nan, np.nan,
-            item['proj_code'], np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            item['dept_code'], np.nan, 'VEN02027', np.nan, np.nan, np.nan, np.nan, np.nan,
-            'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1, np.nan, np.nan, np.nan, np.nan,
-            amt, amt, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+            1 if is_first else np.nan,              # 0: *单据头(序号)
+            '002' if is_first else np.nan,          # 1: 账簿编码
+            np.nan,                                 # 2: 账簿名称
+            date_formatted if is_first else np.nan, # 3: 日期
+            date_formatted if is_first else np.nan, # 4: 业务日期
+            year if is_first else np.nan,           # 5: 会计年度
+            month if is_first else np.nan,          # 6: 期间
+            'PRE001' if is_first else np.nan,       # 7: 凭证字编码
+            np.nan,                                 # 8: 凭证字名称
+            1 if is_first else np.nan,              # 9: 凭证号
+            np.nan, np.nan,                         # 10, 11
+            100 if is_first else np.nan,            # 12: 核算组织编码
+            np.nan, np.nan, np.nan, np.nan, np.nan, # 13-17
+            entry_seq,                              # 18: *分录(序号)
+            explanation,                            # 19: 摘要
+            '6401.21',                              # 20: *(分录)科目编码#编码
+            np.nan, np.nan, np.nan,                 # 21-23
+            item['proj_code'],                      # 24: FDetailID#FF100002 项目段#编码
+            np.nan, np.nan, np.nan, np.nan, np.nan, # 25-29
+            np.nan, np.nan, np.nan, np.nan, np.nan, # 30-34
+            np.nan, np.nan, np.nan, np.nan, np.nan, # 35-39
+            np.nan, np.nan, np.nan, np.nan, np.nan, # 40-44
+            np.nan, np.nan, np.nan,                 # 45-47
+            item['dept_code'],                      # 48: FDetailID#FFlex5 (分录)部门#编码 (成本中心编码)
+            np.nan,                                 # 49
+            'VEN02027',                             # 50: FDetailID#FFlex4 (分录)供应商#编码
+            np.nan, np.nan, np.nan, np.nan, np.nan, # 51-55
+            'PRE007',                               # 56: FCURRENCYID *(分录)币别#编码
+            '美元',                                 # 57: FCURRENCYID#Name (分录)币别#名称
+            'HLTX01_SYS',                           # 58: FEXCHANGERATETYPE *(分录)汇率类型#编码
+            '固定汇率',                             # 59: FEXCHANGERATETYPE#Name (分录)汇率类型#名称
+            1,                                      # 60: FEXCHANGERATE (分录)汇率
+            np.nan, np.nan, np.nan, np.nan,         # 61-64
+            amt,                                    # 65: FAMOUNTFOR 原币金额
+            amt,                                    # 66: FDEBIT 借方金额
+            np.nan,                                 # 67: FCREDIT 贷方金额 (6401.21为空)
+            np.nan, np.nan, np.nan, np.nan, np.nan  # 68-72
         ]
         result_rows.append(row)
         entry_seq += 1
 
-    # 5. 生成贷方分录
+    # 5. 生成贷方分录 (科目 2202.01)
     total_debit_amount = round(total_debit_amount, 2)
     credit_row = [
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        entry_seq, explanation, '2202.01', np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
+        entry_seq,                                  # 18: 分录序号
+        explanation,                                # 19: 摘要
+        '2202.01',                                  # 20: 贷方科目编码
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, 'VEN02027', np.nan, np.nan, np.nan, np.nan, np.nan,
-        'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1, np.nan, np.nan, np.nan, np.nan,
-        np.nan, np.nan, total_debit_amount, np.nan, np.nan, np.nan, np.nan, np.nan
+        np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
+        np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
+        'VEN02027',                                 # 50: FDetailID#FFlex4 供应商编码
+        np.nan, np.nan, np.nan, np.nan, np.nan,
+        'PRE007',                                   # 56: 币别编码
+        '美元',                                     # 57: 币别名称
+        'HLTX01_SYS',                               # 58: 汇率类型编码
+        '固定汇率',                                 # 59: 汇率类型名称
+        1,                                          # 60: 汇率
+        np.nan, np.nan, np.nan, np.nan,
+        total_debit_amount,                         # 65: 原币金额
+        np.nan,                                     # 66: 借方金额 (贷方行为空)
+        total_debit_amount,                         # 67: FCREDIT 贷方金额
+        np.nan, np.nan, np.nan, np.nan, np.nan
     ]
     result_rows.append(credit_row)
 
