@@ -2,16 +2,15 @@ import pandas as pd
 import numpy as np
 import datetime
 import calendar
+import streamlit as st
+import io
 
-def build_kingdee_voucher(draft_filepath, output_filepath, date_str="2026-07-31"):
+def build_kingdee_voucher(draft_file_obj, date_str):
     """
-    将拆分底稿自动转换为金蝶上传凭证模板
-    :param draft_filepath: 输入的拆分底稿 Excel 路径
-    :param output_filepath: 输出的金蝶凭证 Excel 路径
-    :param date_str: 凭证日期，格式 YYYY-MM-DD
+    将上传的拆分底稿自动转换为金蝶上传凭证模板内存文件
     """
     # 1. 解析日期参数
-    voucher_date = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    voucher_date = datetime.datetime.strptime(str(date_str), "%Y-%m-%d")
     year = voucher_date.year
     month = voucher_date.month
     
@@ -21,32 +20,27 @@ def build_kingdee_voucher(draft_filepath, output_filepath, date_str="2026-07-31"
     explanation = f"计提{year}年{month}月Claude消耗-主营业务成本_软件服务费"
 
     # 2. 读取底稿原始数据
-    df_raw = pd.read_excel(draft_filepath, header=None)
+    df_raw = pd.read_excel(draft_file_obj, header=None)
     
-    # 获取项目段编码行（第0行）及对应数据列索引
-    # 根据样本底稿，数据列通常从第6列开始（001, 002, 003...）
     project_segment_row = df_raw.iloc[0].values
     
-    # 识别列头中有有效项目编码（如001, 002, 010等）的列
+    # 识别列头中有有效项目编码（如 001, 002 等）的列
     data_cols = []
     for col_idx in range(len(project_segment_row)):
         val = str(project_segment_row[col_idx]).strip()
         if val != 'nan' and val != '' and val.isdigit():
-            data_cols.append((col_idx, val.zfill(3))) # 补齐3位编码，如 '001'
+            data_cols.append((col_idx, val.zfill(3)))
             
-    # 查找成本中心数据行（成本中心编码在第1列，从第4行开始）
+    # 查找成本中心数据行（成本中心编码在第1列，从第3行/第4列数据开始）
     rows_data = []
     for r in range(3, len(df_raw)):
         dept_code = df_raw.iloc[r, 1]
         if pd.isna(dept_code):
             continue
-        # 转为字符串并清洗
         dept_code_str = str(int(dept_code)) if isinstance(dept_code, (int, float)) else str(dept_code).strip()
         
-        # 遍历每个项目段列获取金额
         for col_idx, proj_code in data_cols:
             amount = df_raw.iloc[r, col_idx]
-            # 过滤 NaN、空值及 0（保留 0.01 或非零值）
             if pd.notna(amount):
                 try:
                     amount_val = round(float(amount), 2)
@@ -59,7 +53,7 @@ def build_kingdee_voucher(draft_filepath, output_filepath, date_str="2026-07-31"
                 except ValueError:
                     continue
 
-    # 3. 构造金蝶凭证表头与结构 (列头包含双行标题)
+    # 3. 构造金蝶凭证表头与结构
     header_row0 = [
         'FBillHead(GL_VOUCHER)', 'FAccountBookID', 'FAccountBookID#Name', 'FDate', 'FBUSDATE', 'FYEAR', 'FPERIOD',
         'FVOUCHERGROUPID', 'FVOUCHERGROUPID#Name', 'FVOUCHERGROUPNO', 'FATTACHMENTS', 'FISADJUSTVOUCHER',
@@ -98,7 +92,6 @@ def build_kingdee_voucher(draft_filepath, output_filepath, date_str="2026-07-31"
     ]
 
     result_rows = [header_row0, header_row1]
-    
     total_debit_amount = 0.0
     entry_seq = 1
 
@@ -106,76 +99,63 @@ def build_kingdee_voucher(draft_filepath, output_filepath, date_str="2026-07-31"
     for item in rows_data:
         amt = item['amount']
         total_debit_amount += amt
-        
         is_first = (entry_seq == 1)
         row = [
-            1 if is_first else np.nan,              # *单据头(序号)
-            '002' if is_first else np.nan,          # 账簿编码
-            np.nan,                                 # 账簿名称
-            date_formatted if is_first else np.nan, # 日期
-            date_formatted if is_first else np.nan, # 业务日期
-            year if is_first else np.nan,           # 会计年度
-            month if is_first else np.nan,          # 期间
-            'PRE001' if is_first else np.nan,       # 凭证字
-            np.nan,
-            1 if is_first else np.nan,              # 凭证号
-            np.nan, np.nan,
-            100 if is_first else np.nan,            # 核算组织
-            np.nan, np.nan, np.nan, np.nan, np.nan,
-            entry_seq,                              # *分录(序号)
-            explanation,                            # 摘要
-            '6401.21',                              # 借方科目编码
-            np.nan, np.nan, np.nan,
-            item['proj_code'],                      # 项目段编码
+            1 if is_first else np.nan, '002' if is_first else np.nan, np.nan,
+            date_formatted if is_first else np.nan, date_formatted if is_first else np.nan,
+            year if is_first else np.nan, month if is_first else np.nan,
+            'PRE001' if is_first else np.nan, np.nan, 1 if is_first else np.nan,
+            np.nan, np.nan, 100 if is_first else np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
+            entry_seq, explanation, '6401.21', np.nan, np.nan, np.nan,
+            item['proj_code'], np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
             np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            item['dept_code'],                      # 部门编码
-            np.nan,
-            'VEN02027',                             # 供应商编码
-            np.nan, np.nan, np.nan, np.nan, np.nan,
-            'PRE007',                               # 币别
-            '美元',
-            'HLTX01_SYS',                           # 汇率类型
-            '固定汇率',
-            1,                                      # 汇率
-            np.nan, np.nan, np.nan, np.nan,
-            amt,                                    # 原币金额
-            amt,                                    # 借方金额
-            np.nan,                                 # 贷方金额
-            np.nan, np.nan, np.nan, np.nan, np.nan
+            item['dept_code'], np.nan, 'VEN02027', np.nan, np.nan, np.nan, np.nan, np.nan,
+            'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1, np.nan, np.nan, np.nan, np.nan,
+            amt, amt, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         ]
         result_rows.append(row)
         entry_seq += 1
 
-    # 5. 生成贷方分录 (应付账款 2202.01)
+    # 5. 生成贷方分录
     total_debit_amount = round(total_debit_amount, 2)
     credit_row = [
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        entry_seq,                                  # 分录序号
-        explanation,                                # 摘要
-        '2202.01',                                  # 贷方科目
+        entry_seq, explanation, '2202.01', np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        'VEN02027',                                 # 供应商编码
-        np.nan, np.nan, np.nan, np.nan, np.nan,
-        'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1,
-        np.nan, np.nan, np.nan, np.nan,
-        np.nan,                                     # 原币金额
-        np.nan,                                     # 借方金额
-        total_debit_amount,                         # 贷方金额
-        np.nan, np.nan, np.nan, np.nan, np.nan
+        np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, 'VEN02027', np.nan, np.nan, np.nan, np.nan, np.nan,
+        'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1, np.nan, np.nan, np.nan, np.nan,
+        np.nan, np.nan, total_debit_amount, np.nan, np.nan, np.nan, np.nan, np.nan
     ]
     result_rows.append(credit_row)
 
-    # 6. 保存导出为 Excel
+    # 6. 将生成的 Excel 写入内存数据流中供下载
     out_df = pd.DataFrame(result_rows)
-    out_df.to_excel(output_filepath, index=False, header=False)
-    print(f"成功生成金蝶凭证上传文件：{output_filepath}，共 {entry_seq} 条分录，总金额：{total_debit_amount}")
+    output_stream = io.BytesIO()
+    with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
+        out_df.to_excel(writer, index=False, header=False)
+    output_stream.seek(0)
+    
+    return output_stream, entry_seq, total_debit_amount
 
-# 示例运行测试
-if __name__ == '__main__':
-    draft_file = '测试-样本Claude拆分底稿-202607.xlsx'
-    output_file = '生成的金蝶上传凭证-202607.xlsx'
-    build_kingdee_voucher(draft_file, output_file, date_str="2026-07-31")
+# --- Streamlit 网页前端界面 ---
+st.title("📊 金蝶入账凭证生成工具")
+
+uploaded_file = st.file_uploader("请选择或拖入当月【Claude拆分底稿】Excel 文件", type=["xlsx", "xls"])
+voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 7, 31))
+
+if uploaded_file is not None:
+    if st.button("🚀 开始自动转换"):
+        try:
+            excel_data, total_entries, total_amt = build_kingdee_voucher(uploaded_file, voucher_date_input)
+            st.success(f"转换成功！生成凭证分录 {total_entries} 条，凭证总金额 ${total_amt:,.2f}")
+            
+            file_name = f"金蝶上传凭证_{voucher_date_input.strftime('%Y%m')}.xlsx"
+            st.download_button(
+                label="📥 点击下载金蝶凭证上传文件",
+                data=excel_data,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as e:
+            st.error(f"转换过程出现错误：{str(e)}")
