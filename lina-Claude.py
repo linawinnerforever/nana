@@ -101,7 +101,7 @@ def build_kingdee_voucher(draft_file_obj, date_str):
         total_debit_amount += amt
         is_first = (entry_seq == 1)
         row = [
-            1 if is_first else np.nan,              # 0: *单据头(序号)
+            '1' if is_first else np.nan,            # 0: *单据头(序号) -> 明确文本格式 '1'
             '002' if is_first else np.nan,          # 1: 账簿编码
             np.nan,                                 # 2: 账簿名称
             date_formatted if is_first else np.nan, # 3: 日期
@@ -112,7 +112,7 @@ def build_kingdee_voucher(draft_file_obj, date_str):
             np.nan,                                 # 8: 凭证字名称
             1 if is_first else np.nan,              # 9: 凭证号
             np.nan, np.nan,                         # 10, 11
-            100 if is_first else np.nan,            # 12: 核算组织编码
+            '100' if is_first else np.nan,          # 12: 核算组织编码 -> 明确文本格式 '100'
             np.nan, np.nan, np.nan, np.nan, np.nan, # 13-17
             entry_seq,                              # 18: *分录(序号)
             explanation,                            # 19: 摘要
@@ -168,17 +168,34 @@ def build_kingdee_voucher(draft_file_obj, date_str):
     ]
     result_rows.append(credit_row)
 
-    # 6. 将生成的 Excel 写入内存数据流中供下载
+    # 6. 将生成的 Excel 写入内存数据流中，并强制设定单元格文本格式
     out_df = pd.DataFrame(result_rows)
     output_stream = io.BytesIO()
-    with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
-        out_df.to_excel(writer, index=False, header=False)
-    output_stream.seek(0)
     
+    with pd.ExcelWriter(output_stream, engine='openpyxl') as writer:
+        out_df.to_excel(writer, index=False, header=False, sheet_name='Sheet1')
+        worksheet = writer.sheets['Sheet1']
+        
+        # 强制设置整列或单元格为文本格式 (Format '@')
+        # Col 1: FBillHead(GL_VOUCHER) (列索引 A)
+        # Col 13: FACCBOOKORGID (列索引 M)
+        for row in range(3, len(result_rows) + 1):
+            cell_billhead = worksheet.cell(row=row, column=1)
+            cell_orgid = worksheet.cell(row=row, column=13)
+            
+            cell_billhead.number_format = '@'
+            cell_orgid.number_format = '@'
+            
+            if cell_billhead.value is not None:
+                cell_billhead.value = str(cell_billhead.value)
+            if cell_orgid.value is not None:
+                cell_orgid.value = str(cell_orgid.value)
+
+    output_stream.seek(0)
     return output_stream, entry_seq, total_debit_amount
 
 # --- Streamlit 网页前端界面 ---
-st.title("📊 Claude金蝶入账凭证生成工具")
+st.title("📊 金蝶入账凭证生成工具")
 
 uploaded_file = st.file_uploader("请选择或拖入当月【Claude拆分底稿】Excel 文件", type=["xlsx", "xls"])
 voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 7, 31))
