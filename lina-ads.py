@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V34 (含Gorogoro与Readshort全流程版)")
-st.markdown("特性：**已新增 Gorogoro 与 Readshort 两个 CM 主体买量产品。** 领导表扩充至 8 个工作表且大盘公式已动态联动。")
+st.title("📊 投放费用月度数据汇总与透视工具 V35 (首行美化与列宽自适应版)")
+st.markdown("特性：**第一行全量单元格已设置垂直居中。** 自动扩展了包含金额大盘公式的列宽，彻底杜绝数字显示为『###』或『XX X』的遮挡问题。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -18,7 +18,6 @@ with col_u1:
 with col_u2:
     mp_file = st.file_uploader("2. 上传最新的投放费用 MP 主数据映射表 (单选 Excel)", type=["xlsx", "xls"])
 
-# 产品主数据映射规则配置 (已新增 goro 与 readshort)
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
@@ -26,11 +25,10 @@ PRODUCT_MAPPING = {
     'merge': {'product': 'Merge', 'entity': 'CM'},
     'reelshort': {'product': 'Reelshort', 'entity': 'NL'},
     'rsnovel': {'product': 'RS N', 'entity': 'NL'},
-    'goro': {'product': 'Gorogoro', 'entity': 'CM'},          # 新增 1
-    'readshort': {'product': 'Readshort', 'entity': 'CM'}      # 新增 2
+    'goro': {'product': 'Gorogoro', 'entity': 'CM'},
+    'readshort': {'product': 'Readshort', 'entity': 'CM'}
 }
 
-# 领导汇总表固定 8 页配置 (顺序定义，已增加 Goro 与 Readshort)
 REQUIRED_SHEETS = {
     'Advertising-Chapters': {'key': 'chapters', 'product': 'CHAPTERS', 'entity': 'CM'},
     'Advertising-Kiss': {'key': 'kiss', 'product': 'KISS', 'entity': 'MH'},
@@ -38,11 +36,11 @@ REQUIRED_SHEETS = {
     'Advertising-Merge': {'key': 'merge', 'product': 'Merge', 'entity': 'CM'},
     'Advertising-Reelshort': {'key': 'reelshort', 'product': 'Reelshort', 'entity': 'NL'},
     'Advertising-RS N': {'key': 'rsnovel', 'product': 'RS N', 'entity': 'NL'},
-    'Advertising-Goro': {'key': 'goro', 'product': 'Gorogoro', 'entity': 'CM'},             # 新增页签 1
-    'Advertising-Readshort': {'key': 'readshort', 'product': 'Readshort', 'entity': 'CM'}     # 新增页签 2
+    'Advertising-Goro': {'key': 'goro', 'product': 'Gorogoro', 'entity': 'CM'},
+    'Advertising-Readshort': {'key': 'readshort', 'product': 'Readshort', 'entity': 'CM'}
 }
 
-# 严格锁定 71 列金蝶凭证表头矩阵映射关系 (物理列 1-71)
+# 71 列金蝶凭证表头矩阵映射关系
 STRICT_71_VOUCHER_HEADERS = [
     ("FBillHead(GL_VOUCHER)", "*单据头(序号)"), ("FAccountBookID", "*(单据头)账簿#编码"), ("FAccountBookID#Name", "(单据头)账簿#名称"),
     ("FDate", "*(单据头)日期"), ("FBUSDATE", "(单据头)业务日期"), ("FYEAR", "(单据头)会计年度"), ("FPERIOD", "(单据头)期间"),
@@ -128,9 +126,6 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         else:
             explanation = f"计提2026年{month_str}月推广费用- {en_month_label}.2026 advertising and marketing cost accrual-{p_channel}"
             
-        # ----------------------------------------------------
-        # 一、借方分录行填充 (6601.03.01)
-        # ----------------------------------------------------
         if idx == 1:
             ws.cell(row=current_row, column=1, value=1)  # FBillHead(GL_VOUCHER)
             ws.cell(row=current_row, column=2, value=book_id)  # FAccountBookID
@@ -146,46 +141,40 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="6601.03.01")  # FACCOUNTID
         
-        # 项目段编码在 FDetailID#FF100002（第 25 列）
+        # 项目段编码挂载在 FDetailID#FF100002（第 25 列）
         ws.cell(row=current_row, column=25, value=p_project)  
         
-        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5 (第49列：项目#编码 7000)
+        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5
         ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
         ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
         ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
         
-        # 借方纯数字千分位
         cell_dr = ws.cell(row=current_row, column=65, value=round(p_spent, 2)) # 第65列 FDEBIT
         cell_dr.number_format = '#,##0.00'
         
         current_row += 1
         
-        # ----------------------------------------------------
-        # 二、贷方分录行填充 (2202.02)
-        # ----------------------------------------------------
         ws.cell(row=current_row, column=19, value=(idx - 1) * 2 + 2)  # FEntity
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="2202.02")  # FACCOUNTID
-        ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4 (第51列：供应商#编码)
+        ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4
         ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
         ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
         ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
         
-        # 贷方纯数字千分位
         cell_cr = ws.cell(row=current_row, column=66, value=round(p_spent, 2)) # 第66列 FCREDIT
         cell_cr.number_format = '#,##0.00'
         
         current_row += 1
         
-    # 账务前置文本格式保护设定，锁死文本格式防篡改
     for r in range(3, current_row):
         ws.cell(row=r, column=2).number_format = '@'
         ws.cell(row=r, column=13).number_format = '@'
-        ws.cell(row=r, column=25).number_format = '@' # 第25列项目文本
+        ws.cell(row=r, column=25).number_format = '@' 
         ws.cell(row=r, column=49).number_format = '@'
         ws.cell(row=r, column=51).number_format = '@'
         
@@ -288,8 +277,8 @@ if uploaded_files:
         if mp_file:
             df_mp_matrix = load_mp_matrix(mp_file)
             
-        df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['消耗'].sum()
-        df_pivot.rename(columns={'开户服务商': '开户方', '消耗': 'spent'}, inplace=True)
+        df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户方'], as_index=False, dropna=False)['消耗'].sum()
+        df_pivot.rename(columns={'开户方': '开户方', '消耗': 'spent'}, inplace=True)
         
         df_pivot['供应商-渠道'] = df_pivot.apply(
             lambda r: str(r['开户方']).strip() if str(r['开户方']).strip() != "" else str(r['投放渠道']).strip(), axis=1
@@ -364,7 +353,7 @@ if uploaded_files:
             st.success("✅ **主数据核对通过**：CM/MH 主体的所有供应商名称与编码已 100% 精准匹配成功！")
 
         # ==========================================
-        # 1. 常规业务分析总表
+        # 1. 常规业务分析总表 (已优化首行垂直居中与数字自适应显示)
         # ==========================================
         wb_orig = openpyxl.Workbook(); ws_orig = wb_orig.active; ws_orig.title = "费用汇总及透视表"; ws_orig.views.sheetView[0].showGridLines = True
         font_title = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
@@ -379,61 +368,102 @@ if uploaded_files:
         detail_cols = ['投放渠道', '开户方', '广告户名', 'spent', '买量产品', '核算主体']
         detail_end = len(df_detail) + 3; pivot_end = len(df_pivot) + 3
         
+        # 1. 左侧明细总计行：增加 vertical="center" 垂直居中
         ws_orig.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
             cell = ws_orig.cell(row=1, column=c); cell.border = total_border
             if detail_cols[c-1] == 'spent':
-                cell.value = f"=SUBTOTAL(9, D4:D{detail_end})"; cell.font = font_total; cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right", vertical="center")
-            elif c == 1: cell.alignment = Alignment(horizontal="left", vertical="center")
-            else: cell.alignment = Alignment(horizontal="center", vertical="center")
+                cell.value = f"=SUBTOTAL(9, D4:D{detail_end})"
+                cell.font = font_total
+                cell.number_format = '#,##0.00'
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+            elif c == 1: 
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else: 
+                cell.alignment = Alignment(horizontal="center", vertical="center")
                 
-        ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total; ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
-        cell_orig_sub = ws_orig.cell(row=1, column=10); cell_orig_sub.value = f"=SUBTOTAL(9, J4:J{pivot_end})"; cell_orig_sub.font = font_total; cell_orig_sub.number_format = '#,##0.00'; cell_orig_sub.alignment = Alignment(horizontal="right", vertical="center")
+        # 2. 右侧透视总计看板：全部强制 vertical="center" 垂直居中
+        ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
+        ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
         
-        ws_orig.cell(row=1, column=11, value="CM:").font = font_total; ws_orig.cell(row=1, column=11).alignment = Alignment(horizontal="right", vertical="center")
-        cell_cm_sumif = ws_orig.cell(row=1, column=12, value=f'=SUMIF(I4:I{pivot_end}, \"CM\", J4:J{pivot_end})'); cell_cm_sumif.font = font_total; cell_cm_sumif.number_format = '#,##0.00'; cell_cm_sumif.alignment = Alignment(horizontal="right")
-        ws_orig.cell(row=1, column=13, value="MH:").font = font_total; ws_orig.cell(row=1, column=13).alignment = Alignment(horizontal="right", vertical="center")
-        cell_mh_sumif = ws_orig.cell(row=1, column=14, value=f'=SUMIF(I4:I{pivot_end}, \"MH\", J4:J{pivot_end})'); cell_mh_sumif.font = font_total; cell_mh_sumif.number_format = '#,##0.00'; cell_mh_sumif.alignment = Alignment(horizontal="right")
-        ws_orig.cell(row=1, column=15, value="CM+MH:").font = font_total; ws_orig.cell(row=1, column=15).alignment = Alignment(horizontal="right", vertical="center")
-        cell_cm_mh_ttl = ws_orig.cell(row=1, column=16, value=f'=L1+N1'); cell_cm_mh_ttl.font = font_total; cell_cm_mh_ttl.number_format = '#,##0.00'; cell_cm_mh_ttl.alignment = Alignment(horizontal="right")
+        cell_orig_sub = ws_orig.cell(row=1, column=10)
+        cell_orig_sub.value = f"=SUBTOTAL(9, J4:J{pivot_end})"
+        cell_orig_sub.font = font_total
+        cell_orig_sub.number_format = '#,##0.00'
+        cell_orig_sub.alignment = Alignment(horizontal="right", vertical="center")
         
-        for c in range(8, 8 + len(pivot_cols)): ws_orig.cell(row=1, column=c).border = total_border
+        ws_orig.cell(row=1, column=11, value="CM:").font = font_total
+        ws_orig.cell(row=1, column=11).alignment = Alignment(horizontal="right", vertical="center")
         
-        ws_orig.merge_cells("A2:F2"); ws_orig["A2"] = "投放费用明细表"; ws_orig["A2"].font = font_title; ws_orig["A2"].fill = fill_detail_title; ws_orig["A2"].alignment = Alignment(horizontal="center")
+        cell_cm_sumif = ws_orig.cell(row=1, column=12, value=f'=SUMIF(I4:I{pivot_end}, "CM", J4:J{pivot_end})')
+        cell_cm_sumif.font = font_total
+        cell_cm_sumif.number_format = '#,##0.00'
+        cell_cm_sumif.alignment = Alignment(horizontal="right", vertical="center")
+        
+        ws_orig.cell(row=1, column=13, value="MH:").font = font_total
+        ws_orig.cell(row=1, column=13).alignment = Alignment(horizontal="right", vertical="center")
+        
+        cell_mh_sumif = ws_orig.cell(row=1, column=14, value=f'=SUMIF(I4:I{pivot_end}, "MH", J4:J{pivot_end})')
+        cell_mh_sumif.font = font_total
+        cell_mh_sumif.number_format = '#,##0.00'
+        cell_mh_sumif.alignment = Alignment(horizontal="right", vertical="center")
+        
+        ws_orig.cell(row=1, column=15, value="CM+MH:").font = font_total
+        ws_orig.cell(row=1, column=15).alignment = Alignment(horizontal="right", vertical="center")
+        
+        cell_cm_mh_ttl = ws_orig.cell(row=1, column=16, value=f'=L1+N1')
+        cell_cm_mh_ttl.font = font_total
+        cell_cm_mh_ttl.number_format = '#,##0.00'
+        cell_cm_mh_ttl.alignment = Alignment(horizontal="right", vertical="center")
+        
+        for c in range(8, 8 + len(pivot_cols)): 
+            ws_orig.cell(row=1, column=c).border = total_border
+        
+        ws_orig.merge_cells("A2:F2"); ws_orig["A2"] = "投放费用明细表"; ws_orig["A2"].font = font_title; ws_orig["A2"].fill = fill_detail_title; ws_orig["A2"].alignment = Alignment(horizontal="center", vertical="center")
         end_letter = openpyxl.utils.get_column_letter(7 + len(pivot_cols))
-        ws_orig.merge_cells(f"H2:{end_letter}2"); ws_orig["H2"] = "投放费用透视表"; ws_orig["H2"].font = font_title; ws_orig["H2"].fill = fill_pivot_title; ws_orig["H2"].alignment = Alignment(horizontal="center")
+        ws_orig.merge_cells(f"H2:{end_letter}2"); ws_orig["H2"] = "投放费用透视表"; ws_orig["H2"].font = font_title; ws_orig["H2"].fill = fill_pivot_title; ws_orig["H2"].alignment = Alignment(horizontal="center", vertical="center")
         
         for idx, col in enumerate(detail_cols, 1):
-            cell = ws_orig.cell(row=3, column=idx, value=col); cell.font = font_header; cell.fill = fill_detail_hdr; cell.alignment = Alignment(horizontal="center")
+            cell = ws_orig.cell(row=3, column=idx, value=col); cell.font = font_header; cell.fill = fill_detail_hdr; cell.alignment = Alignment(horizontal="center", vertical="center")
         for idx, col in enumerate(pivot_cols, 8):
-            cell = ws_orig.cell(row=3, column=idx, value=col); cell.font = font_header; cell.fill = fill_pivot_hdr; cell.alignment = Alignment(horizontal="center")
+            cell = ws_orig.cell(row=3, column=idx, value=col); cell.font = font_header; cell.fill = fill_pivot_hdr; cell.alignment = Alignment(horizontal="center", vertical="center")
             
         for r_idx, row in enumerate(dataframe_to_rows(df_detail.rename(columns={'开户服务商': '开户方', '消耗': 'spent'})[detail_cols], index=False, header=False), start=4):
             for c_idx, val in enumerate(row, start=1):
                 cell = ws_orig.cell(row=r_idx, column=c_idx, value=val); cell.font = font_body; cell.border = thin_border
-                if detail_cols[c_idx-1] == 'spent': cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
-                else: cell.alignment = Alignment(horizontal="center")
+                if detail_cols[c_idx-1] == 'spent': cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right", vertical="center")
+                else: cell.alignment = Alignment(horizontal="center", vertical="center")
                 if r_idx % 2 == 0: cell.fill = fill_zebra
                     
         for r_idx, row in enumerate(dataframe_to_rows(df_pivot[pivot_cols], index=False, header=False), start=4):
             for c_idx, val in enumerate(row, start=8):
                 cell = ws_orig.cell(row=r_idx, column=c_idx, value=val); cell.font = font_body; cell.border = thin_border
-                if pivot_cols[c_idx-8] == 'spent': cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right")
+                if pivot_cols[c_idx-8] == 'spent': cell.number_format = '#,##0.00'; cell.alignment = Alignment(horizontal="right", vertical="center")
                 else:
-                    cell.alignment = Alignment(horizontal="center")
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
                     if pivot_cols[c_idx-8] in ['项目', '供应商编码']: cell.number_format = '@'
 
-        ws_orig.row_dimensions[1].height = 26; ws_orig.row_dimensions[2].height = 24; ws_orig.row_dimensions[3].height = 22
+        ws_orig.row_dimensions[1].height = 28 # 第一行高度适度拉高，增强呼吸感
+        ws_orig.row_dimensions[2].height = 24
+        ws_orig.row_dimensions[3].height = 22
+        
+        # 优化列宽计算：为金额看板列及超长金额预留安全边际，彻底消除“###”与“XX X”防遮挡问题
         for col in ws_orig.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = openpyxl.utils.get_column_letter(col[0].column)
-            ws_orig.column_dimensions[col_letter].width = max(max_len + 3, 12)
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            
+            # 对承载金额和大盘看板公式的列（D列明细金额、J列透视金额、L/N/P列大盘数字列）加宽保护
+            if col_letter in ['D', 'J', 'L', 'N', 'P']:
+                ws_orig.column_dimensions[col_letter].width = max(max_len + 5, 18)
+            else:
+                ws_orig.column_dimensions[col_letter].width = max(max_len + 3, 13)
+                
         ws_orig.column_dimensions['G'].width = 4
         
         excel_data_orig = io.BytesIO(); wb_orig.save(excel_data_orig); excel_data_orig.seek(0)
 
         # ==========================================
-        # 2. 导出：【给领导的汇总表】(固定 8 页，大盘范围涵盖至 Readshort)
+        # 2. 导出：【给领导的汇总表】
         # ==========================================
         wb_leader = openpyxl.Workbook(); wb_leader.remove(wb_leader.active)
         font_l_hdr = Font(name="微软雅黑", size=10, bold=True); font_l_body = Font(name="微软雅黑", size=10)
@@ -455,7 +485,6 @@ if uploaded_files:
             data_end_row = max(4, len(df_l_final) + 3)
             if sheet_name == 'Advertising-Chapters':
                 ws_l.cell(row=1, column=5, value="TTL:").font = font_l_hdr; ws_l.cell(row=1, column=5).alignment = align_right
-                # 动态扩展跨表求和范围至最后的 Advertising-Readshort
                 ws_l.cell(row=1, column=6, value=f"=SUM('Advertising-Chapters:Advertising-Readshort'!G4:G5000)").font = font_l_grand_total; ws_l.cell(row=1, column=6).number_format = '#,##0.00'; ws_l.cell(row=1, column=6).alignment = align_right
             
             ws_l.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_l_top_sub; ws_l.cell(row=1, column=7).number_format = '#,##0.00'; ws_l.cell(row=1, column=7).alignment = align_right
@@ -506,7 +535,7 @@ if uploaded_files:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口 (71列精准对应挂载版)")
+        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口 (71列改挂对齐版)")
         c_v1, c_v2 = st.columns(2)
         with c_v1:
             st.download_button(
