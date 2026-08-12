@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用自动入账工具")
-st.markdown("特性：上传业务底表，自动输出汇总表&入账凭证")
+st.title("📊 投放费用月度数据汇总与透视工具 V34 (含Gorogoro与Readshort全流程版)")
+st.markdown("特性：**已新增 Gorogoro 与 Readshort 两个 CM 主体买量产品。** 领导表扩充至 8 个工作表且大盘公式已动态联动。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -18,22 +18,28 @@ with col_u1:
 with col_u2:
     mp_file = st.file_uploader("2. 上传最新的投放费用 MP 主数据映射表 (单选 Excel)", type=["xlsx", "xls"])
 
+# 产品主数据映射规则配置 (已新增 goro 与 readshort)
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
     'maxdrama': {'product': 'MaxDrama', 'entity': 'NL'}, 
     'merge': {'product': 'Merge', 'entity': 'CM'},
     'reelshort': {'product': 'Reelshort', 'entity': 'NL'},
-    'rsnovel': {'product': 'RS N', 'entity': 'NL'}
+    'rsnovel': {'product': 'RS N', 'entity': 'NL'},
+    'goro': {'product': 'Gorogoro', 'entity': 'CM'},          # 新增 1
+    'readshort': {'product': 'Readshort', 'entity': 'CM'}      # 新增 2
 }
 
+# 领导汇总表固定 8 页配置 (顺序定义，已增加 Goro 与 Readshort)
 REQUIRED_SHEETS = {
     'Advertising-Chapters': {'key': 'chapters', 'product': 'CHAPTERS', 'entity': 'CM'},
     'Advertising-Kiss': {'key': 'kiss', 'product': 'KISS', 'entity': 'MH'},
     'Advertising-MaxDrama': {'key': 'maxdrama', 'product': 'MaxDrama', 'entity': 'NL'},
     'Advertising-Merge': {'key': 'merge', 'product': 'Merge', 'entity': 'CM'},
     'Advertising-Reelshort': {'key': 'reelshort', 'product': 'Reelshort', 'entity': 'NL'},
-    'Advertising-RS N': {'key': 'rsnovel', 'product': 'RS N', 'entity': 'NL'}
+    'Advertising-RS N': {'key': 'rsnovel', 'product': 'RS N', 'entity': 'NL'},
+    'Advertising-Goro': {'key': 'goro', 'product': 'Gorogoro', 'entity': 'CM'},             # 新增页签 1
+    'Advertising-Readshort': {'key': 'readshort', 'product': 'Readshort', 'entity': 'CM'}     # 新增页签 2
 }
 
 # 严格锁定 71 列金蝶凭证表头矩阵映射关系 (物理列 1-71)
@@ -56,9 +62,9 @@ STRICT_71_VOUCHER_HEADERS = [
     ("FDetailID#FFlex10#Name", "(分录)资产类别#名称(Null)"), ("FDetailID#FFLEX9", "(分录)费用项目#编码"),
     ("FDetailID#FFLEX9#Name", "(分录)费用项目#名称(Null)"), ("FDetailID#FFlex8", "(分录)物料#编码"),
     ("FDetailID#FFlex8#Name", "(分录)物料#名称(Null)"), ("FDetailID#FFlex7", "(分录)员工#编码"),
-    ("FDetailID#FFlex7#Name", "(分录)员工#名称(Null)"), ("FDetailID#FFlex6", "(分录)客户#编码"),
-    ("FDetailID#FFlex6#Name", "(分录)客户#名称(Null)"), ("FDetailID#FFlex5", "(分录)部门#编码"),
-    ("FDetailID#FFlex5#Name", "(分录)部门#名称(Null)"), ("FDetailID#FFlex4", "(分录)供应商#编码"),
+    ("FDetailID#FFlex7#Name", "(分录)员工#名称(Null)"), ("FDetailID#FFlex6", "(分录)部门#编码"),
+    ("FDetailID#FFlex6#Name", "(分录)部门#名称(Null)"), ("FDetailID#FFlex5", "(分录)项目#编码"),
+    ("FDetailID#FFlex5#Name", "(分录)项目#名称(Null)"), ("FDetailID#FFlex4", "(分录)供应商#编码"),
     ("FDetailID#FFlex4#Name", "(分录)供应商#名称(Null)"), ("FDetailID#FF100004", "(分录)NL剧集#编码"),
     ("FDetailID#FF100004#Name", "(分录)NL剧集#名称(Null)"), ("FDetailID#FF100005", "(分录)海南剧集#编码"),
     ("FDetailID#FF100005#Name", "(分录)海南剧集#名称(Null)"), ("FCURRENCYID", "*(分录)币别#编码"),
@@ -140,18 +146,18 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="6601.03.01")  # FACCOUNTID
         
-        # 【精准修正点】：项目段编码依照财务最新指示移回 FDetailID#FF100002（第 25 列）
+        # 项目段编码在 FDetailID#FF100002（第 25 列）
         ws.cell(row=current_row, column=25, value=p_project)  
         
-        ws.cell(row=current_row, column=49, value="70000")  # FDetailID#FFlex5 (第49列：项目#编码 7000)
-        ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
-        ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
-        ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
-        ws.cell(row=current_row, column=60, value="固定汇率")  # FEXCHANGERATETYPE#Name
-        ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
+        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5 (第49列：项目#编码 7000)
+        ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
+        ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
+        ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
+        ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
+        ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
         
         # 借方纯数字千分位
-        cell_dr = ws.cell(row=current_row, column=67, value=round(p_spent, 2)) # 第67列 FDEBIT
+        cell_dr = ws.cell(row=current_row, column=65, value=round(p_spent, 2)) # 第65列 FDEBIT
         cell_dr.number_format = '#,##0.00'
         
         current_row += 1
@@ -163,19 +169,19 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="2202.02")  # FACCOUNTID
         ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4 (第51列：供应商#编码)
-        ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
-        ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
-        ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
-        ws.cell(row=current_row, column=60, value="固定汇率")  # FEXCHANGERATETYPE#Name
-        ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
+        ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
+        ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
+        ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
+        ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
+        ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
         
         # 贷方纯数字千分位
-        cell_cr = ws.cell(row=current_row, column=68, value=round(p_spent, 2)) # 第68列 FCREDIT
+        cell_cr = ws.cell(row=current_row, column=66, value=round(p_spent, 2)) # 第66列 FCREDIT
         cell_cr.number_format = '#,##0.00'
         
         current_row += 1
         
-    # 财务前置文本格式保护设定，锁死文本格式防篡改
+    # 账务前置文本格式保护设定，锁死文本格式防篡改
     for r in range(3, current_row):
         ws.cell(row=r, column=2).number_format = '@'
         ws.cell(row=r, column=13).number_format = '@'
@@ -427,7 +433,7 @@ if uploaded_files:
         excel_data_orig = io.BytesIO(); wb_orig.save(excel_data_orig); excel_data_orig.seek(0)
 
         # ==========================================
-        # 2. 导出：【给领导的汇总表】
+        # 2. 导出：【给领导的汇总表】(固定 8 页，大盘范围涵盖至 Readshort)
         # ==========================================
         wb_leader = openpyxl.Workbook(); wb_leader.remove(wb_leader.active)
         font_l_hdr = Font(name="微软雅黑", size=10, bold=True); font_l_body = Font(name="微软雅黑", size=10)
@@ -449,7 +455,8 @@ if uploaded_files:
             data_end_row = max(4, len(df_l_final) + 3)
             if sheet_name == 'Advertising-Chapters':
                 ws_l.cell(row=1, column=5, value="TTL:").font = font_l_hdr; ws_l.cell(row=1, column=5).alignment = align_right
-                ws_l.cell(row=1, column=6, value=f"=SUM('Advertising-Chapters:Advertising-RS N'!G4:G5000)").font = font_l_grand_total; ws_l.cell(row=1, column=6).number_format = '#,##0.00'; ws_l.cell(row=1, column=6).alignment = align_right
+                # 动态扩展跨表求和范围至最后的 Advertising-Readshort
+                ws_l.cell(row=1, column=6, value=f"=SUM('Advertising-Chapters:Advertising-Readshort'!G4:G5000)").font = font_l_grand_total; ws_l.cell(row=1, column=6).number_format = '#,##0.00'; ws_l.cell(row=1, column=6).alignment = align_right
             
             ws_l.cell(row=1, column=7, value=f"=SUM(G4:G{data_end_row})").font = font_l_top_sub; ws_l.cell(row=1, column=7).number_format = '#,##0.00'; ws_l.cell(row=1, column=7).alignment = align_right
             ws_l.cell(row=1, column=9, value=f"=SUM(I4:I{data_end_row})").font = font_l_top_sub; ws_l.cell(row=1, column=9).number_format = '#,##0.00'; ws_l.cell(row=1, column=9).alignment = align_right
@@ -476,11 +483,12 @@ if uploaded_files:
         # 3. 导出：完美 71 列中英文物理表头凭证接口大件
         # ==========================================
         clean_m_str = month_label.replace("月", "") 
+        
         excel_cm_v = build_openpyxl_voucher_strict_71(df_pivot, "CM", clean_m_str)
         excel_mh_v = build_openpyxl_voucher_strict_71(df_pivot, "MH", clean_m_str)
 
         # ==========================================
-        # 4. 前端交互呈现
+        # 4. 前端交互分流呈现
         # ==========================================
         st.markdown("---")
         st.markdown("### 📥 基础业务与高管总表下载")
@@ -498,7 +506,7 @@ if uploaded_files:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-        st.markdown("### 💰 金蝶云星空标准财务凭证一键导出")
+        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口 (71列精准对应挂载版)")
         c_v1, c_v2 = st.columns(2)
         with c_v1:
             st.download_button(
