@@ -8,8 +8,8 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V35 (首行美化与列宽自适应版)")
-st.markdown("特性：**第一行全量单元格已设置垂直居中。** 自动扩展了包含金额大盘公式的列宽，彻底杜绝数字显示为『###』或『XX X』的遮挡问题。")
+st.title("📊 投放费用月度数据汇总与透视工具 V36 (KeyError 修复版)")
+st.markdown("特性：**彻底修复了 groupby 分组时『开户服务商』列名不匹配引发的 KeyError 报错。** 71列金蝶凭证及视觉美化完全合规。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
@@ -141,10 +141,8 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="6601.03.01")  # FACCOUNTID
         
-        # 项目段编码挂载在 FDetailID#FF100002（第 25 列）
-        ws.cell(row=current_row, column=25, value=p_project)  
-        
-        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5
+        ws.cell(row=current_row, column=25, value=p_project)  # FDetailID#FF100002 (对应第25列：项目段编码)
+        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5 (对应第49列：项目#编码 7000)
         ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
@@ -159,7 +157,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=19, value=(idx - 1) * 2 + 2)  # FEntity
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="2202.02")  # FACCOUNTID
-        ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4
+        ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4 (对应第51列：供应商#编码)
         ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
@@ -174,7 +172,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
     for r in range(3, current_row):
         ws.cell(row=r, column=2).number_format = '@'
         ws.cell(row=r, column=13).number_format = '@'
-        ws.cell(row=r, column=25).number_format = '@' 
+        ws.cell(row=r, column=25).number_format = '@'
         ws.cell(row=r, column=49).number_format = '@'
         ws.cell(row=r, column=51).number_format = '@'
         
@@ -277,8 +275,9 @@ if uploaded_files:
         if mp_file:
             df_mp_matrix = load_mp_matrix(mp_file)
             
-        df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户方'], as_index=False, dropna=False)['消耗'].sum()
-        df_pivot.rename(columns={'开户方': '开户方', '消耗': 'spent'}, inplace=True)
+        # 【核心修正】：用 '开户服务商' 分组，并安全统一重命名为 '开户方'，彻底杜绝 KeyError 报错
+        df_pivot = df_detail.groupby(['买量产品', '核算主体', '投放渠道', '开户服务商'], as_index=False, dropna=False)['消耗'].sum()
+        df_pivot.rename(columns={'开户服务商': '开户方', '消耗': 'spent'}, inplace=True)
         
         df_pivot['供应商-渠道'] = df_pivot.apply(
             lambda r: str(r['开户方']).strip() if str(r['开户方']).strip() != "" else str(r['投放渠道']).strip(), axis=1
@@ -353,7 +352,7 @@ if uploaded_files:
             st.success("✅ **主数据核对通过**：CM/MH 主体的所有供应商名称与编码已 100% 精准匹配成功！")
 
         # ==========================================
-        # 1. 常规业务分析总表 (已优化首行垂直居中与数字自适应显示)
+        # 1. 常规业务分析总表 (首行垂直居中与防遮挡列宽)
         # ==========================================
         wb_orig = openpyxl.Workbook(); ws_orig = wb_orig.active; ws_orig.title = "费用汇总及透视表"; ws_orig.views.sheetView[0].showGridLines = True
         font_title = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
@@ -368,7 +367,6 @@ if uploaded_files:
         detail_cols = ['投放渠道', '开户方', '广告户名', 'spent', '买量产品', '核算主体']
         detail_end = len(df_detail) + 3; pivot_end = len(df_pivot) + 3
         
-        # 1. 左侧明细总计行：增加 vertical="center" 垂直居中
         ws_orig.cell(row=1, column=1, value="总计 (SUBTOTAL)").font = font_total
         for c in range(1, 7):
             cell = ws_orig.cell(row=1, column=c); cell.border = total_border
@@ -382,7 +380,6 @@ if uploaded_files:
             else: 
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 
-        # 2. 右侧透视总计看板：全部强制 vertical="center" 垂直居中
         ws_orig.cell(row=1, column=8, value="总计 (SUBTOTAL)").font = font_total
         ws_orig.cell(row=1, column=8).alignment = Alignment(horizontal="left", vertical="center")
         
@@ -443,16 +440,13 @@ if uploaded_files:
                     cell.alignment = Alignment(horizontal="center", vertical="center")
                     if pivot_cols[c_idx-8] in ['项目', '供应商编码']: cell.number_format = '@'
 
-        ws_orig.row_dimensions[1].height = 28 # 第一行高度适度拉高，增强呼吸感
+        ws_orig.row_dimensions[1].height = 28
         ws_orig.row_dimensions[2].height = 24
         ws_orig.row_dimensions[3].height = 22
         
-        # 优化列宽计算：为金额看板列及超长金额预留安全边际，彻底消除“###”与“XX X”防遮挡问题
         for col in ws_orig.columns:
             col_letter = openpyxl.utils.get_column_letter(col[0].column)
             max_len = max(len(str(cell.value or '')) for cell in col)
-            
-            # 对承载金额和大盘看板公式的列（D列明细金额、J列透视金额、L/N/P列大盘数字列）加宽保护
             if col_letter in ['D', 'J', 'L', 'N', 'P']:
                 ws_orig.column_dimensions[col_letter].width = max(max_len + 5, 18)
             else:
