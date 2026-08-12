@@ -205,7 +205,7 @@ def process_server_cost_sheet(draft_file_obj, date_str):
     }
 
 # --- Streamlit 网页前端界面 ---
-st.title("📊 服务器成本自动入账凭证生成工具")
+st.title("📊 OpenAI & Google金蝶入账凭证生成工具")
 
 uploaded_file = st.file_uploader("请选择或拖入当月【测试服务器成本分摊汇总表】Excel 文件", type=["xlsx", "xls"])
 voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 7, 31))
