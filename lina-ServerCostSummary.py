@@ -4,12 +4,35 @@ import datetime
 import calendar
 import streamlit as st
 import io
+import re
+
+def update_summary_date(orig_summary, year, month):
+    """
+    根据选择的凭证日期，自动替换摘要中的中文年月和英文月份缩写
+    例如：将 计提2026年7月...Jul.2026... 替换为 计提2026年8月...Aug.2026...
+    """
+    if pd.isna(orig_summary) or not isinstance(orig_summary, str):
+        return f"计提{year}年{month}月服务器成本"
+        
+    month_abbr = calendar.month_abbr[month] # 例如 'Aug', 'Sep'
+    
+    # 1. 替换中文年月：如 2026年7月 -> 2026年8月
+    updated = re.sub(r'\d{4}年\d{1,2}月', f'{year}年{month}月', str(orig_summary).strip())
+    
+    # 2. 替换英文月份与年份：如 Jul.2026 -> Aug.2026
+    updated = re.sub(
+        r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.\d{4}', 
+        f'{month_abbr}.{year}', 
+        updated, 
+        flags=re.IGNORECASE
+    )
+    
+    return updated
 
 def build_server_summary_voucher(draft_file_obj, date_str):
     """
     读取《服务器成本分摊汇总表》中的“汇总”页签，自动打包生成标准金蝶上传凭证 Excel
     """
-    # 1. 解析日期参数
     voucher_date = datetime.datetime.strptime(str(date_str), "%Y-%m-%d")
     year = voucher_date.year
     month = voucher_date.month
@@ -17,20 +40,24 @@ def build_server_summary_voucher(draft_file_obj, date_str):
     _, last_day = calendar.monthrange(year, month)
     date_formatted = f"{year}-{month:02d}-{last_day:02d}"
 
-    # 2. 读取“汇总”Sheet 原始数据
     xls = pd.ExcelFile(draft_file_obj)
     sheet_name_src = '汇总' if '汇总' in xls.sheet_names else xls.sheet_names[0]
     df_summary = pd.read_excel(xls, sheet_name=sheet_name_src, header=None)
 
-    # 第 10 行为表头，第 11 行起为明细数据
     df_data = df_summary.iloc[11:].copy()
     df_data.columns = df_summary.iloc[10].values
 
-    # 过滤入账美元金额为 0 或空的数据
+    # 1. 过滤金额为 0 或空的数据
     df_data['求和项:入账美元金额'] = pd.to_numeric(df_data['求和项:入账美元金额'], errors='coerce').fillna(0)
-    df_valid = df_data[df_data['求和项:入账美元金额'] != 0].copy()
+    
+    # 2. 过滤掉“总计”、“合计”行以及无效行
+    df_valid = df_data[
+        (df_data['求和项:入账美元金额'] != 0) & 
+        (~df_data['供应商'].astype(str).str.contains('总计|合计', na=False)) &
+        (df_data['摘要-final'].notna()) & 
+        (df_data['摘要-final'].astype(str).str.strip() != 'nan')
+    ].copy()
 
-    # 保持原有出现顺序按 (摘要-final, 供应商编码) 进行分组
     grouped_keys = []
     for idx, row in df_valid.iterrows():
         summary_val = str(row['摘要-final']).strip() if pd.notna(row['摘要-final']) else ""
@@ -39,7 +66,6 @@ def build_server_summary_voucher(draft_file_obj, date_str):
         if key not in grouped_keys:
             grouped_keys.append(key)
 
-    # 3. 构造金蝶凭证表头结构
     header_row0 = [
         'FBillHead(GL_VOUCHER)', 'FAccountBookID', 'FAccountBookID#Name', 'FDate', 'FBUSDATE', 'FYEAR', 'FPERIOD',
         'FVOUCHERGROUPID', 'FVOUCHERGROUPID#Name', 'FVOUCHERGROUPNO', 'FATTACHMENTS', 'FISADJUSTVOUCHER',
@@ -81,16 +107,16 @@ def build_server_summary_voucher(draft_file_obj, date_str):
     total_debit_grand_sum = 0.0
     entry_seq = 1
 
-    # 4. 生成分录行
-    for summary_val, vendor_code in grouped_keys:
+    for orig_summary_val, vendor_code in grouped_keys:
         sub_group = df_valid[
-            (df_valid['摘要-final'].astype(str).str.strip() == summary_val) & 
+            (df_valid['摘要-final'].astype(str).str.strip() == orig_summary_val) & 
             (df_valid['供应商编码'].astype(str).str.strip() == vendor_code)
         ]
         
+        # 自动依据选中的凭证日期生成最新摘要
+        dynamic_summary = update_summary_date(orig_summary_val, year, month)
         group_debit_total = 0.0
         
-        # 4.1 逐行生成借方分录
         for idx, row in sub_group.iterrows():
             amt = round(float(row['求和项:入账美元金额']), 2)
             group_debit_total += amt
@@ -112,69 +138,67 @@ def build_server_summary_voucher(draft_file_obj, date_str):
             is_first = (entry_seq == 1)
 
             debit_row = [
-                '1' if is_first else np.nan,            # 0: *单据头(序号)
-                '002' if is_first else np.nan,          # 1: 账簿编码
-                'Crazy Maple Studio Inc' if is_first else np.nan, # 2: 账簿名称
-                date_formatted if is_first else np.nan, # 3: 日期
-                date_formatted if is_first else np.nan, # 4: 业务日期
-                year if is_first else np.nan,           # 5: 会计年度
-                month if is_first else np.nan,          # 6: 期间
-                'PRE001' if is_first else np.nan,       # 7: 凭证字编码
-                '记' if is_first else np.nan,           # 8: 凭证字名称
-                1 if is_first else np.nan,              # 9: 凭证号
-                np.nan, np.nan,                         # 10, 11
-                '100' if is_first else np.nan,          # 12: 核算组织编码
-                np.nan, np.nan, np.nan, np.nan, np.nan, # 13-17
-                entry_seq,                              # 18: *分录(序号)
-                summary_val,                            # 19: 摘要
-                account_code,                           # 20: 科目编码
-                np.nan, np.nan, np.nan,                 # 21-23
-                proj_code,                              # 24: 项目段编码
-                np.nan, np.nan, np.nan, np.nan, np.nan, # 25-29
-                np.nan, np.nan, np.nan, np.nan, np.nan, # 30-34
-                np.nan, np.nan, np.nan, np.nan, np.nan, # 35-39
-                np.nan, np.nan, np.nan, np.nan, np.nan, # 40-44
-                np.nan, np.nan, np.nan,                 # 45-47
-                dept_code,                              # 48: 部门编码
-                np.nan,                                 # 49
-                vendor_code,                            # 50: 供应商编码
-                np.nan, np.nan, np.nan,                 # 51-53
-                hainan_code,                            # 54: 海南剧集编码
-                np.nan,                                 # 55
-                'PRE007', np.nan, 'HLTX01_SYS', np.nan, 1, # 56-60
-                np.nan, np.nan, np.nan, np.nan,         # 61-64
-                np.nan,                                 # 65: 原币金额
-                amt,                                    # 66: 借方金额
-                np.nan,                                 # 67: 贷方金额
-                np.nan, np.nan, np.nan, np.nan, np.nan  # 68-72
+                '1' if is_first else np.nan,
+                '002' if is_first else np.nan,
+                'Crazy Maple Studio Inc' if is_first else np.nan,
+                date_formatted if is_first else np.nan,
+                date_formatted if is_first else np.nan,
+                year if is_first else np.nan,
+                month if is_first else np.nan,
+                'PRE001' if is_first else np.nan,
+                '记' if is_first else np.nan,
+                1 if is_first else np.nan,
+                np.nan, np.nan,
+                '100' if is_first else np.nan,
+                np.nan, np.nan, np.nan, np.nan, np.nan,
+                entry_seq,
+                dynamic_summary,                       # 使用动态更新后的摘要
+                account_code,
+                np.nan, np.nan, np.nan,
+                proj_code,
+                np.nan, np.nan, np.nan, np.nan, np.nan,
+                np.nan, np.nan, np.nan, np.nan, np.nan,
+                np.nan, np.nan, np.nan, np.nan, np.nan,
+                np.nan, np.nan, np.nan, np.nan, np.nan,
+                np.nan, np.nan, np.nan,
+                dept_code,
+                np.nan,
+                vendor_code,
+                np.nan, np.nan, np.nan,
+                hainan_code,
+                np.nan,
+                'PRE007', np.nan, 'HLTX01_SYS', np.nan, 1,
+                np.nan, np.nan, np.nan, np.nan,
+                np.nan,
+                amt,
+                np.nan,
+                np.nan, np.nan, np.nan, np.nan, np.nan
             ]
             result_rows.append(debit_row)
             entry_seq += 1
 
-        # 4.2 生成该组对应的贷方分录 (应付账款 2202.01)
         group_debit_total = round(group_debit_total, 2)
         credit_row = [
             np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
             np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            entry_seq,                                  # 18: 分录序号
-            summary_val,                                # 19: 摘要
-            '2202.01',                                  # 20: 贷方科目编码
+            entry_seq,
+            dynamic_summary,                           # 使用动态更新后的摘要
+            '2202.01',
             np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
             np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
             np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-            vendor_code,                                # 50: 供应商编码
+            vendor_code,
             np.nan, np.nan, np.nan, np.nan, np.nan,
             'PRE007', np.nan, 'HLTX01_SYS', np.nan, 1,
             np.nan, np.nan, np.nan, np.nan,
-            np.nan,                                     # 65: 原币金额
-            np.nan,                                     # 66: 借方金额
-            group_debit_total,                          # 67: 贷方金额
+            np.nan,
+            np.nan,
+            group_debit_total,
             np.nan, np.nan, np.nan, np.nan, np.nan
         ]
         result_rows.append(credit_row)
         entry_seq += 1
 
-    # 5. 生成 Excel 并设置工作表名称和格式
     out_df = pd.DataFrame(result_rows)
     output_stream = io.BytesIO()
     sheet_target = '凭证#单据头(FBillHead)'
@@ -200,9 +224,8 @@ def build_server_summary_voucher(draft_file_obj, date_str):
 st.title("📊 服务器成本分摊汇总凭证生成工具")
 
 uploaded_file = st.file_uploader("请选择或拖入当月【测试服务器成本分摊汇总表】Excel 文件", type=["xlsx", "xls"])
-voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 7, 31))
+voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 8, 31))
 
-# 持久化存储结果，解决下载按钮跳转问题
 if 'server_summary_results' not in st.session_state:
     st.session_state.server_summary_results = None
 
@@ -220,7 +243,6 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"解析发生错误：{str(e)}")
 
-# 渲染持久化的结果与下载按钮
 if st.session_state.server_summary_results is not None:
     res = st.session_state.server_summary_results
     st.subheader("生成结果：")
