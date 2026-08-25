@@ -62,6 +62,13 @@ _TX_RE = re.compile(
     r'(?:\s+(-?[\d,]+\.\d{2}))?'
 )
 
+# 正则: 短参考号交易行 (如银行月费), 参考号为字母+数字组合
+#   格式: 07/01 07/01 MONTHLY REPORTNG FEE M15 0065 15.00
+_FEE_RE = re.compile(
+    r'(?<![/\d])(\d{2}/\d{2})\s+(?<![/\d])(\d{2}/\d{2})\s+'
+    r'(.+?)\s+([A-Z]{1,4}\d{1,8})\s+(\d{4})\s+([\d,]+\.\d{2})'
+)
+
 # 正则: 外币换算续行  "07/03  431.28  SGD  1.279686"
 _FX_RE = re.compile(
     r'(\d{2}/\d{2})\s+([\d,]+\.\d{2})\s+([A-Z]{3})\s+([\d.]+)'
@@ -215,6 +222,40 @@ def _parse_section_content(content, period, holder_name, card_last4,
 
         # 普通交易行
         m = _TX_RE.match(line)
+        if not m:
+            # 短参考号交易行 (如 MONTHLY REPORTNG FEE)
+            m = _FEE_RE.match(line)
+            if m:
+                post_date, trans_date = m.group(1), m.group(2)
+                raw_desc, ref_num, mcc = m.group(3), m.group(4), m.group(5)
+                amount = float(m.group(6).replace(',', ''))
+                desc = re.sub(r'\s+', ' ', raw_desc).strip()
+
+                # 向后收集续行，附加到描述
+                i += 1
+                while i < len(lines):
+                    next_line = lines[i].strip()
+                    if not next_line:
+                        i += 1
+                        continue
+                    if (_TX_RE.match(next_line) or _AUTO_PAY_RE.match(next_line)
+                            or _FEE_RE.match(next_line)):
+                        break
+                    if next_line.startswith('Total Activity') or 'Account Number' in next_line:
+                        break
+                    frag = _format_continuation(next_line)
+                    if frag:
+                        desc += f" {frag}"
+                    i += 1
+
+                txns.append([
+                    period, holder_name, card_last4,
+                    trans_date, post_date,
+                    desc, ref_num, mcc,
+                    amount, "Charge"
+                ])
+                continue
+
         if m:
             post_date, trans_date = m.group(1), m.group(2)
             raw_desc, ref_num, mcc = m.group(3), m.group(4), m.group(5)
@@ -245,7 +286,7 @@ def _parse_section_content(content, period, holder_name, card_last4,
                     i += 1
                     continue
                 # 如果下一行是新的交易行 → 停止
-                if _TX_RE.match(next_line) or _AUTO_PAY_RE.match(next_line):
+                if _TX_RE.match(next_line) or _AUTO_PAY_RE.match(next_line) or _FEE_RE.match(next_line):
                     break
                 if next_line.startswith('Total Activity') or 'Account Number' in next_line:
                     break
@@ -426,10 +467,10 @@ def generate_excel(summary_by_period, transactions):
     c.number_format = "$#,##0.00"
     c.alignment = Alignment(horizontal="right", vertical="center")
 
-    # I2: 非公司持卡人 Charge 合计
+    # I2: 非公司持卡人交易合计 (含 Credit 负数)
     c = ws_det.cell(
         row=2, column=9,
-        value=f'=SUMIFS(I4:I{last_row}, B4:B{last_row}, "<>CRAZY MAPLE STUDIO*", J4:J{last_row}, "Charge")'
+        value=f'=SUMIFS(I4:I{last_row}, B4:B{last_row}, "<>CRAZY MAPLE STUDIO*")'
     )
     c.font = bold_font
     c.fill = stat_fill
