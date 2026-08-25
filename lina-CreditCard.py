@@ -127,7 +127,53 @@ def _format_continuation(line):
     return None  # 其他续行默认跳过
 
 
-def _parse_section_content(content, period, holder_name, card_last4):
+def detect_credit_sequence(file_bytes):
+    """
+    用 pdfplumber 坐标检测每笔普通交易(_TX_RE)的金额位于 Charge 还是 Credit 列。
+    返回布尔列表 (True=Credit), 顺序与 pypdf 文本按 _TX_RE 匹配的交易顺序一致。
+    原理: BofA 账单中 Charge/Credit 分列, 金额词 x 坐标落入哪列即归属哪列。
+    """
+    flags = []
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                words = page.extract_words(x_tolerance=2, y_tolerance=3)
+                # 按 top 聚类成物理行
+                rows = {}
+                for w in words:
+                    rows.setdefault(round(w['top']), []).append(w)
+
+                # 定位交易表头: 行内同时含 Charge 与 Credit 词 (取每页第一处)
+                charge_x = credit_x = None
+                for key in sorted(rows):
+                    texts = [w['text'] for w in rows[key]]
+                    if 'Charge' in texts and 'Credit' in texts:
+                        for w in rows[key]:
+                            if w['text'] == 'Credit':
+                                credit_x = w['x0']
+                            elif w['text'] == 'Charge':
+                                charge_x = w['x0']
+                        break
+                if charge_x is None or credit_x is None:
+                    continue
+
+                boundary = (charge_x + credit_x) / 2
+                for key in sorted(rows):
+                    ws = sorted(rows[key], key=lambda x: x['x0'])
+                    line = ' '.join(w['text'] for w in ws)
+                    if _TX_RE.match(line):
+                        money = [w for w in ws
+                                 if re.fullmatch(r'-?[\d,]+\.\d{2}', w['text'])]
+                        rm = max(money, key=lambda x: x['x0']) if money else None
+                        flags.append(bool(rm and rm['x0'] > boundary))
+    except Exception:
+        pass
+    return flags
+
+
+def _parse_section_content(content, period, holder_name, card_last4,
+                           credit_seq=None, seq=None):
     """
     逐行解析持卡人区块内容，返回 (total_activity, transactions_list)
     续行(乘客名/到达日/外币换算)会附加到前一条交易的描述中
@@ -175,9 +221,15 @@ def _parse_section_content(content, period, holder_name, card_last4):
             charge_str = m.group(6)
             credit_str = m.group(7) if m.lastindex and m.lastindex >= 7 else None
 
-            # Credit 列有数据 → 金额取 Credit 的负数
-            if credit_str:
-                amount = -abs(float(credit_str.replace(',', '')))
+            # Credit 判断: ① 同行两金额(Charge+Credit) ② 该行金额位于 PDF Credit 列
+            is_credit = credit_str is not None
+            if not is_credit and credit_seq is not None and seq is not None:
+                idx = seq[0]
+                seq[0] += 1
+                is_credit = idx < len(credit_seq) and credit_seq[idx]
+
+            if is_credit:
+                amount = -abs(float((credit_str or charge_str).replace(',', '')))
                 tx_type = "Credit"
             else:
                 amount = float(charge_str.replace(',', ''))
@@ -287,6 +339,10 @@ def parse_pdf(file_bytes):
     # 汇总 Dashboard 数据来源: Cardholder Activity Summary (排除公司层级)
     summary = parse_cardholder_summary(text, main_acct_last4)
 
+    # 用 pdfplumber 坐标检测每笔交易的 Charge/Credit 列归属 (顺序与文本流一致)
+    credit_seq = detect_credit_sequence(file_bytes)
+    seq = [0]
+
     transactions = []
 
     for idx, section in enumerate(sections):
@@ -300,7 +356,7 @@ def parse_pdf(file_bytes):
 
         # 逐行解析交易明细 (汇总不再从这里取)
         _, txns = _parse_section_content(
-            content, period, holder_name, card_last4
+            content, period, holder_name, card_last4, credit_seq, seq
         )
 
         transactions.extend(txns)
