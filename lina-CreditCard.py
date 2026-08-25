@@ -1,24 +1,22 @@
+import io
 import re
 import pdfplumber
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import streamlit as st
 
-def extract_pdf_data(pdf_paths):
-    """
-    从给定的 Bank of America 信用卡 PDF 账单中提取:
-    1. 动态账单周期 (Billing Period)
-    2. 页码 3 中的 Cardholder Activity Summary 静态汇总数据
-    3. 详细交易明细 (Transactions)
-    """
+def extract_pdf_data(uploaded_files):
+    """从 Streamlit 上传的多个 PDF 账单中提取数据"""
     all_transactions = []
-    summary_by_period = {}  # 格式: {period_name: {cardholder_name: total_activity}}
+    summary_by_period = {}
 
-    for pdf_path in pdf_paths:
-        with pdfplumber.open(pdf_path) as pdf:
+    for uploaded_file in uploaded_files:
+        # 打开 Streamlit 传入的 BytesIO 文件对象
+        with pdfplumber.open(uploaded_file) as pdf:
             period_name = "Unknown Period"
             
-            # 1. 动态提取账单周期字符串 (例: July 02, 2026 - July 15, 2026)
+            # 1. 动态提取账单周期字符串
             for page in pdf.pages:
                 text = page.extract_text()
                 if not text:
@@ -44,21 +42,21 @@ def extract_pdf_data(pdf_paths):
                 for line in lines:
                     line = line.strip()
                     
-                    # 匹配持卡人 Header (例如: BHAGAT, KRUTI V Account Number: XXXX-XXXX-XXXX-4574)
+                    # 匹配持卡人 Header
                     card_match = re.search(r'([A-Z,\s]+)\s+Account Number:\s*XXXX-XXXX-XXXX-(\d{4})', line)
                     if card_match:
                         current_cardholder = card_match.group(1).strip()
                         current_card_last4 = card_match.group(2).strip()
                         continue
                     
-                    # 提取 PDF Summary 区域静态数值 (Cardholder Activity Summary)
+                    # 提取 PDF Summary 区域静态数值
                     summary_match = re.search(r'^([A-Z,\s]+)\s+XXXX-XXXX-XXXX-\d{4}\s+[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)\s+([\d,.]+)$', line)
                     if summary_match:
                         holder_name = summary_match.group(1).strip()
                         total_act = float(summary_match.group(3).replace(',', ''))
                         summary_by_period[period_name][holder_name] = total_act
 
-                    # 提取普通交易明细行 (Date PostDate Description RefNum MCC Amount)
+                    # 提取普通交易明细行
                     tx_match = re.search(r'^(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(.+?)\s+(\d{10,})\s+(\d{4})\s+([\d,]+\.\d{2})$', line)
                     if tx_match and current_cardholder:
                         all_transactions.append([
@@ -68,7 +66,7 @@ def extract_pdf_data(pdf_paths):
                             float(tx_match.group(6).replace(',', '')), "Charge"
                         ])
 
-                    # 提取主账户自动还款扣款行 (AUTO PAYMENT DEDUCTION)
+                    # 提取主账户自动还款扣款行
                     pay_match = re.search(r'AUTO PAYMENT DEDUCTION\s+(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(\d+)\s+([\d,]+\.\d{2})', line)
                     if pay_match:
                         all_transactions.append([
@@ -79,10 +77,10 @@ def extract_pdf_data(pdf_paths):
 
     return summary_by_period, all_transactions
 
-def generate_excel_report(summary_by_period, transactions, output_filename="bank_statement_final.xlsx"):
+def generate_excel_bytes(summary_by_period, transactions):
+    """在内存中生成 Excel 文件并返回 Bytes 数据"""
     wb = openpyxl.Workbook()
 
-    # 统一视觉样式定义 (与明细表完全一致的深蓝表头)
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     data_font = Font(name="Calibri", size=10)
@@ -92,17 +90,11 @@ def generate_excel_report(summary_by_period, transactions, output_filename="bank
     thin_border = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
     total_border = Border(top=Side(border_style="thin", color="000000"), bottom=Side(border_style="double", color="000000"), left=thin_border_side, right=thin_border_side)
 
-    # -------------------------------------------------------------
-    # 1. 建立「交易明细」 Sheet (提前写入以确定 Check 公式的计算总行数)
-    # -------------------------------------------------------------
+    # 1. 明细页签
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    det_headers = [
-        "账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", 
-        "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", 
-        "MCC", "金额 (Amount)", "交易类型 (Type)"
-    ]
+    det_headers = ["账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", "MCC", "金额 (Amount)", "交易类型 (Type)"]
     
     for c_idx, h_text in enumerate(det_headers, 1):
         cell = ws_det.cell(row=1, column=c_idx, value=h_text)
@@ -125,15 +117,12 @@ def generate_excel_report(summary_by_period, transactions, output_filename="bank
 
     last_detail_row = len(transactions) + 1
 
-    # 自动调整明细列宽
     for col in ws_det.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
         ws_det.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    # -------------------------------------------------------------
-    # 2. 建立「汇总 Dashboard」 Sheet (放在第一页)
-    # -------------------------------------------------------------
+    # 2. 首页 Dashboard 页签
     ws_sum = wb.active
     ws_sum.title = "汇总 Dashboard"
     ws_sum.views.sheetView[0].showGridLines = True
@@ -141,7 +130,6 @@ def generate_excel_report(summary_by_period, transactions, output_filename="bank
     periods = list(summary_by_period.keys())
     sum_headers = ["持卡人"] + periods + ["合计 (Total)"]
 
-    # 写入表头 (第一列已更改为「持卡人」)
     for c_idx, h_text in enumerate(sum_headers, 1):
         cell = ws_sum.cell(row=1, column=c_idx, value=h_text)
         cell.fill = header_fill
@@ -149,14 +137,11 @@ def generate_excel_report(summary_by_period, transactions, output_filename="bank
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-    # 获取所有持卡人名字
     all_holders = sorted(list({h for p in summary_by_period.values() for h in p.keys()}))
 
-    # 写入静态数值数据行
     for r_idx, holder in enumerate(all_holders, start=2):
         c1 = ws_sum.cell(row=r_idx, column=1, value=holder)
         c1.font = data_font
-        c1.alignment = Alignment(horizontal="left", vertical="center")
         c1.border = thin_border
         
         row_tot = 0.0
@@ -169,18 +154,15 @@ def generate_excel_report(summary_by_period, transactions, output_filename="bank
             c.alignment = Alignment(horizontal="right", vertical="center")
             c.border = thin_border
             
-        # 静态计算出的整行合计
         c_tot = ws_sum.cell(row=r_idx, column=len(periods) + 2, value=row_tot)
         c_tot.font = data_font
         c_tot.number_format = "$#,##0.00"
         c_tot.alignment = Alignment(horizontal="right", vertical="center")
         c_tot.border = thin_border
 
-    # 写入底部合计 Total 行 (静态数值)
     tot_row = len(all_holders) + 2
     lbl = ws_sum.cell(row=tot_row, column=1, value="合计 (Total)")
     lbl.font = bold_font
-    lbl.alignment = Alignment(horizontal="left", vertical="center")
     lbl.border = total_border
 
     grand_tot = 0.0
@@ -200,41 +182,50 @@ def generate_excel_report(summary_by_period, transactions, output_filename="bank
     g_cell.alignment = Alignment(horizontal="right", vertical="center")
     g_cell.border = total_border
 
-    # -------------------------------------------------------------
-    # 3. 增加 Check 校验行 (校验明细表 Charge 金额与首页 Total 单元格)
-    # -------------------------------------------------------------
+    # 3. Check 校验行
     check_row = tot_row + 2
     ws_sum.cell(row=check_row, column=1, value="check").font = bold_font
-    
-    # 动态构建 SUMIF 公式，相减目标单元格为 Grand Total 所在位置 (如 D6)
     c_check = ws_sum.cell(row=check_row, column=len(periods) + 2)
     c_check.value = f'=SUMIF(交易明细!J2:J{last_detail_row}, "Charge", 交易明细!I2:I{last_detail_row}) - {total_cell_letter}{tot_row}'
     c_check.font = bold_font
-    # 会计格式：当完全相等相减为 0 时自动显示为 "-"
     c_check.number_format = '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)'
     c_check.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 自动设置首页列宽
     ws_sum.column_dimensions['A'].width = 25
     for col_i in range(2, len(periods) + 3):
         col_l = get_column_letter(col_i)
         ws_sum.column_dimensions[col_l].width = 30
 
-    wb.save(output_filename)
-    print(f"导出成功！已保存文件为: {output_filename}")
+    # 将 Excel 写入内存流，供 Streamlit 网页下载
+    excel_stream = io.BytesIO()
+    wb.save(excel_stream)
+    excel_stream.seek(0)
+    return excel_stream
 
 # -------------------------------------------------------------
-# 运行主程序示例
+# Streamlit 界面逻辑
 # -------------------------------------------------------------
-if __name__ == "__main__":
-    # 替换为您的 PDF 账单路径列表
-    pdf_files = [
-        "2273-Statement-20260715.pdf",
-        "2273-Statement-20260731.pdf"
-    ]
-    
-    # 1. 提取 PDF 账单数据
-    summary_data, detail_data = extract_pdf_data(pdf_files)
-    
-    # 2. 生成 Excel 报告
-    generate_excel_report(summary_data, detail_data, "bank_statement_final.xlsx")
+st.set_page_config(page_title="信用卡账单自动解析小工具", page_icon="📄")
+st.title("📄 信用卡 PDF 账单自动解析工具")
+st.write("请在下方上传 Bank of America PDF 账单文件（支持同时上传多个文件）：")
+
+uploaded_files = st.file_uploader("选择 PDF 文件", type=["pdf"], accept_multiple_files=True)
+
+if uploaded_files:
+    if st.button("🚀 开始提取并生成 Excel", type="primary"):
+        with st.spinner("正在解析 PDF 并生成报表中..."):
+            try:
+                summary_data, detail_data = extract_pdf_data(uploaded_files)
+                excel_bytes = generate_excel_bytes(summary_data, detail_data)
+                
+                st.success(f"成功解析 {len(uploaded_files)} 个 PDF 账单！已提取 {len(detail_data)} 条明细。")
+                
+                # 提供 Excel 下载按钮
+                st.download_button(
+                    label="📥 点击下载 Excel 汇总表格",
+                    data=excel_bytes,
+                    file_name="信用卡账单汇总表.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as e:
+                st.error(f"解析过程出错，请检查 PDF 格式是否正确。错误详情: {e}")
