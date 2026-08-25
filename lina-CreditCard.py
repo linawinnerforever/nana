@@ -69,14 +69,15 @@ def extract_pdf_data(uploaded_files):
                     end_pos = header_matches[idx+1].start() if idx+1 < len(header_matches) else len(tx_text)
                     section_content = tx_text[start_pos:end_pos]
                     
-                    # 匹配自动还款扣款
+                    # 匹配自动还款扣款 (Credit / Payment 金额取负数)
                     if "AUTO PAYMENT DEDUCTION" in section_content:
                         pay_m = re.search(r'AUTO PAYMENT DEDUCTION[\s\S]*?(\d{2}/\d{2})\s*(\d{2}/\d{2})[\s\S]*?(\d{4})[\s\S]*?([\d,]+\.\d{2})', section_content)
                         if pay_m:
+                            amt_val = float(pay_m.group(4).replace(',', ''))
                             all_transactions.append([
                                 period_name, holder_name, card_last4,
                                 pay_m.group(1), pay_m.group(2), "AUTO PAYMENT DEDUCTION",
-                                pay_m.group(3), "", float(pay_m.group(4).replace(',', '')), "Credit / Payment"
+                                pay_m.group(3), "", -abs(amt_val), "Credit / Payment"
                             ])
                         else:
                             pay_amt_m = re.search(r'([\d,]+\.\d{2})', section_content)
@@ -84,17 +85,14 @@ def extract_pdf_data(uploaded_files):
                             all_transactions.append([
                                 period_name, holder_name, card_last4,
                                 "07/08", "07/08", "AUTO PAYMENT DEDUCTION",
-                                "0071", "", pay_amt, "Credit / Payment"
+                                "0071", "", -abs(pay_amt), "Credit / Payment"
                             ])
                     
-                    # 逐行精确提取交易明细与纯净商户描述
+                    # 逐行提取交易明细
                     lines = [re.sub(r'^[|\s]+', '', l).strip() for l in section_content.split('\n') if l.strip()]
                     ref_indices = [i for i, l in enumerate(lines) if re.search(r'\b\d{23,24}\b', l)]
                     
                     for i, r_idx in enumerate(ref_indices):
-                        prev_idx = ref_indices[i-1] if i > 0 else 0
-                        next_idx = ref_indices[i+1] if i+1 < len(ref_indices) else len(lines)
-                        
                         tx_lines = lines[max(0, r_idx-4):min(len(lines), r_idx+5)]
                         ref_num = re.search(r'\b(\d{23,24})\b', lines[r_idx]).group(1)
                         
@@ -105,13 +103,20 @@ def extract_pdf_data(uploaded_files):
                         post_date = dates[0] if len(dates) > 0 else ""
                         trans_date = dates[1] if len(dates) > 1 else post_date
                         
-                        # 提取金额
+                        # 提取金额 (如果在 Credit 列，则取负数)
                         amount = 0.0
+                        is_credit = False
                         for l in tx_lines:
                             a_found = re.findall(r'([\d,]+\.\d{2})', l)
                             if a_found:
                                 amount = float(a_found[-1].replace(',', ''))
-                                
+                        
+                        # 判断交易类型
+                        tx_type = "Charge"
+                        if is_credit:
+                            amount = -abs(amount)
+                            tx_type = "Credit"
+
                         # 提取 MCC
                         mcc = ""
                         for l in tx_lines:
@@ -123,7 +128,7 @@ def extract_pdf_data(uploaded_files):
                             if mcc:
                                 break
                                 
-                        # 精确提取纯净商户交易描述
+                        # 提取 PDF 原文 Description
                         desc_parts = []
                         for l in tx_lines:
                             if re.search(r'Account Number|Total Activity|Posting Transaction|Description|Charge|Credit|Page \d|BANK OF AMERICA', l, re.I):
@@ -147,7 +152,7 @@ def extract_pdf_data(uploaded_files):
                         
                         all_transactions.append([
                             period_name, holder_name, card_last4,
-                            trans_date, post_date, desc, ref_num, mcc, amount, "Charge"
+                            trans_date, post_date, desc, ref_num, mcc, amount, tx_type
                         ])
 
     return summary_by_period, all_transactions
@@ -172,20 +177,10 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # 清空 A1 与 A2 单元格
-    ws_det.cell(row=1, column=1, value="")
-    ws_det.cell(row=2, column=1, value="")
-
-    # H 列放置清晰统计标签
-    c_lbl1 = ws_det.cell(row=1, column=8, value="CRAZY MAPLE STUDIO 金额合计:")
-    c_lbl1.font = bold_font
-    c_lbl1.alignment = Alignment(horizontal="right", vertical="center")
-    c_lbl1.fill = stat_fill
-
-    c_lbl2 = ws_det.cell(row=2, column=8, value="非 CRAZY MAPLE STUDIO 金额合计:")
-    c_lbl2.font = bold_font
-    c_lbl2.alignment = Alignment(horizontal="right", vertical="center")
-    c_lbl2.fill = stat_fill
+    # 清空 A1 到 H2 的全部文字
+    for r in [1, 2]:
+        for c in range(1, 9):
+            ws_det.cell(row=r, column=c, value="")
 
     last_detail_row = len(transactions) + 3
 
@@ -208,7 +203,7 @@ def generate_excel_bytes(summary_by_period, transactions):
             cell.border = thin_border
             cell.fill = stat_fill
 
-    # 第 3 行为交易明细表头 Header
+    # 第 3 行为交易明细表头
     det_headers = ["账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", "MCC", "金额 (Amount)", "交易类型 (Type)"]
     for c_idx, h_text in enumerate(det_headers, 1):
         cell = ws_det.cell(row=3, column=c_idx, value=h_text)
@@ -231,13 +226,11 @@ def generate_excel_bytes(summary_by_period, transactions):
                 cell.number_format = "$#,##0.00"
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 第 3 行开启自动下拉筛选按钮 (AutoFilter)
+    # 自动开启表头筛选与冻结
     ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
-
-    # 自动冻结前 3 行 (A4)
     ws_det.freeze_panes = "A4"
 
-    # 精确计算列宽 (金额列 I 不再过宽)
+    # 计算列宽
     for col_idx in range(1, 11):
         col_letter = get_column_letter(col_idx)
         max_len = 0
@@ -249,9 +242,9 @@ def generate_excel_bytes(summary_by_period, transactions):
         header_len = len(str(det_headers[col_idx - 1]))
         max_len = max(max_len, header_len)
         
-        if col_idx == 9:  # 金额列紧凑列宽
+        if col_idx == 9:
             ws_det.column_dimensions[col_letter].width = max(max_len + 5, 18)
-        elif col_idx == 6:  # 交易描述列
+        elif col_idx == 6:
             ws_det.column_dimensions[col_letter].width = min(max_len + 4, 55)
         else:
             ws_det.column_dimensions[col_letter].width = max(max_len + 4, 14)
@@ -318,7 +311,7 @@ def generate_excel_bytes(summary_by_period, transactions):
     g_cell.alignment = Alignment(horizontal="right", vertical="center")
     g_cell.border = total_border
 
-    # 3. Check 校验行 (交易明细表除了 CRAZY MAPLE STUDIO 的金额 I2 减去 首页合计 Total)
+    # 3. Check 校验行
     check_row = tot_row + 2
     ws_sum.cell(row=check_row, column=1, value="check").font = bold_font
     c_check = ws_sum.cell(row=check_row, column=len(periods) + 2)
