@@ -28,34 +28,35 @@ def extract_pdf_data(uploaded_files):
             if period_name not in summary_by_period:
                 summary_by_period[period_name] = {}
 
-            # 2. 从 Cardholder Activity Summary 模块精准提取持卡人与金额
+            # 2. 从 Cardholder Activity Summary 模块精准提取持卡人与金额 (支持 Unicode 字符)
             if "Cardholder Activity Summary" in full_text:
                 parts = full_text.split("Cardholder Activity Summary")
                 for part in parts[1:]:
                     sub_text = part.split("Transactions")[0]
-                    card_matches = list(re.finditer(r'XXXX-XXXX-XXXX-(\d{4})', sub_text))
-                    for idx, cm in enumerate(card_matches):
-                        last4 = cm.group(1)
-                        c_pos = cm.start()
-                        text_before = sub_text[max(0, c_pos-150):c_pos]
-                        lines_before = [l.strip('|\s') for l in text_before.split('\n') if l.strip('|\s')]
+                    # 匹配姓名（非数字行）和卡号
+                    matches = list(re.finditer(r'([^\n\d]{3,35})\n[\s\|]*XXXX-XXXX-XXXX-(\d{4})', sub_text))
+                    for idx, cm in enumerate(matches):
+                        raw_name = cm.group(1).strip()
+                        lines = [l.strip('|\s') for l in raw_name.split('\n') if l.strip('|\s')]
+                        holder_name = lines[-1] if lines else raw_name
                         
-                        holder_name = "UNKNOWN"
-                        for l in reversed(lines_before):
-                            if re.search(r'[A-Za-z]{2,}', l) and not re.search(r'Account Number|Credit Limit|Total Activity|Purchases|Credits|Cash|Page \d|BANK OF AMERICA', l):
-                                holder_name = l
-                                break
+                        if any(k in holder_name for k in ["Account Number", "Credit Limit", "Total Activity", "Purchases", "Credits", "Cash", "BANK OF AMERICA"]):
+                            continue
+                            
+                        start_pos = cm.end()
+                        end_pos = matches[idx+1].start() if idx+1 < len(matches) else len(sub_text)
+                        block_text = sub_text[start_pos:end_pos]
                         
-                        end_pos = card_matches[idx+1].start() if idx+1 < len(card_matches) else len(sub_text)
-                        text_after = sub_text[c_pos:end_pos]
-                        amounts = re.findall(r'([\d,]+\.\d{2})', text_after)
+                        amounts = re.findall(r'([\d,]+\.\d{2})', block_text)
                         if amounts:
                             summary_by_period[period_name][holder_name] = float(amounts[-1].replace(',', ''))
 
             # 3. 精准解析 Transactions 交易区域
             if "Transactions" in full_text:
                 tx_text = full_text.split("Transactions", 1)[1]
-                header_matches = list(re.finditer(r'([A-Z0-9,\s]{3,40})\n\s*Account Number:\s*XXXX-XXXX-XXXX-(\d{4})', tx_text))
+                # 精确正则：不包含数字，防止金额尾数(如 .25) 混入名字
+                header_regex = r'([^\n\d]{3,40})\n\s*Account Number:\s*XXXX-XXXX-XXXX-(\d{4})'
+                header_matches = list(re.finditer(header_regex, tx_text))
                 
                 for idx, hm in enumerate(header_matches):
                     raw_name = hm.group(1).strip('|\s')
