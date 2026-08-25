@@ -1,164 +1,102 @@
 import io
 import re
-import pdfplumber
+import pypdf
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import streamlit as st
 
-def clean_holder_name(name):
-    """剔除持卡人姓名中误带的 Total Activity 后缀"""
-    name = re.sub(r'\s*Total\s*Activity.*$', '', name, flags=re.IGNORECASE)
-    name = re.sub(r'[\d,.]+$', '', name)
-    return name.strip('|\s')
+def clean_header_name(raw_name):
+    """提取纯净持卡人姓名"""
+    if "CRAZY MAPLE STUDIO" in raw_name:
+        return "CRAZY MAPLE STUDIO"
+    lines = [l.strip() for l in raw_name.split('\n') if l.strip()]
+    last_line = lines[-1] if lines else raw_name
+    last_line = re.sub(r'^(?:[A-Za-z\s]*?(?:MCC|Charge|Credit|PostingDate|TransactionDate|Description|Reference Number|mber))+\s*', '', last_line, flags=re.IGNORECASE)
+    last_line = re.sub(r'\s*Total\s*Activity.*$', '', last_line, flags=re.IGNORECASE)
+    return last_line.strip('|\s')
 
 def extract_pdf_data(uploaded_files):
-    """从 Bank of America PDF 账单中精准提取数据"""
+    """精准解析 Bank of America PDF 账单 (与 V3 版内容100%保持一致)"""
     all_transactions = []
     summary_by_period = {}
 
     for uploaded_file in uploaded_files:
         file_bytes = io.BytesIO(uploaded_file.getvalue())
+        reader = pypdf.PdfReader(file_bytes)
         
-        with pdfplumber.open(file_bytes) as pdf:
-            full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-            
-            # 1. 动态提取账单周期
-            period_match = re.search(r'([A-Za-z]+\s+\d{2},\s*\d{4}\s*-\s*[A-Za-z]+\s+\d{2},\s*\d{4})', full_text)
-            period_name = period_match.group(1).strip() if period_match else "Unknown Period"
-            
-            if period_name not in summary_by_period:
-                summary_by_period[period_name] = {}
+        full_text = ""
+        for page in reader.pages:
+            full_text += (page.extract_text() or "") + "\n"
 
-            # 2. 从 Cardholder Activity Summary 模块提取持卡人与最终金额
-            if "Cardholder Activity Summary" in full_text:
-                parts = full_text.split("Cardholder Activity Summary")
-                for part in parts[1:]:
-                    sub_text = part.split("Transactions")[0]
-                    card_matches = list(re.finditer(r'XXXX-XXXX-XXXX-(\d{4})', sub_text))
-                    for idx, cm in enumerate(card_matches):
-                        c_pos = cm.start()
-                        text_before = sub_text[max(0, c_pos-150):c_pos]
-                        lines_before = [l.strip('|\s') for l in text_before.split('\n') if l.strip('|\s')]
-                        
-                        holder_name = "UNKNOWN"
-                        for l in reversed(lines_before):
-                            if re.search(r'[A-Za-z]{2,}', l) and not re.search(r'Account Number|Credit Limit|Total Activity|Purchases|Credits|Cash|Page \d|BANK OF AMERICA', l):
-                                holder_name = clean_holder_name(l)
-                                break
-                        
-                        end_pos = card_matches[idx+1].start() if idx+1 < len(card_matches) else len(sub_text)
-                        text_after = sub_text[c_pos:end_pos]
-                        amounts = re.findall(r'([\d,]+\.\d{2})', text_after)
-                        if amounts and holder_name != "UNKNOWN":
-                            summary_by_period[period_name][holder_name] = float(amounts[-1].replace(',', ''))
+        # 1. 动态提取账单周期
+        period_match = re.search(r'([A-Za-z]+\s+\d{2},\s*\d{4}\s*-\s*[A-Za-z]+\s+\d{2},\s*\d{4})', full_text)
+        period_name = period_match.group(1).strip() if period_match else "Unknown Period"
+        
+        if period_name not in summary_by_period:
+            summary_by_period[period_name] = {}
 
-            # 3. 精准解析 Transactions 交易区域
-            if "Transactions" in full_text:
-                tx_text = full_text.split("Transactions", 1)[1]
-                header_regex = r'([^\n\d]{3,40})\n\s*Account Number:\s*XXXX-XXXX-XXXX-(\d{4})'
-                header_matches = list(re.finditer(header_regex, tx_text))
+        # 2. 从 Cardholder Activity Summary 提取持卡人汇总
+        if "Cardholder Activity Summary" in full_text:
+            sum_section = full_text.split("Cardholder Activity Summary")[1].split("Transactions")[0]
+            sum_matches = re.findall(r'([A-Z,\s]{3,35})XXXX-XXXX-XXXX-(\d{4})[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)\s+([\d,.]+)', sum_section)
+            for holder, last4, purchases, total_act in sum_matches:
+                clean_name = holder.strip()
+                if not any(k in clean_name for k in ["Account Number", "Credit Limit", "Total Activity", "Purchases", "Credits", "Cash"]):
+                    summary_by_period[period_name][clean_name] = float(total_act.replace(',', ''))
+
+        # 3. 从 Transactions 精准解析明细与 Description 原文
+        if "Transactions" in full_text:
+            tx_text = full_text.split("Transactions", 1)[1]
+            headers = list(re.finditer(r'([^\n\d]{3,40})Account Number:\s*XXXX-XXXX-XXXX-(\d{4})', tx_text))
+            
+            for idx, hm in enumerate(headers):
+                raw_name = hm.group(1).strip()
+                holder_name = clean_header_name(raw_name)
+                card_last4 = hm.group(2).strip()
                 
-                for idx, hm in enumerate(header_matches):
-                    raw_name = hm.group(1).strip('|\s')
-                    clean_lines = [l.strip('|\s') for l in raw_name.split('\n') if l.strip('|\s')]
-                    holder_name = clean_holder_name(clean_lines[-1] if clean_lines else raw_name)
-                    card_last4 = hm.group(2).strip()
-                    
-                    start_pos = hm.end()
-                    end_pos = header_matches[idx+1].start() if idx+1 < len(header_matches) else len(tx_text)
-                    section_content = tx_text[start_pos:end_pos]
-                    
-                    # 匹配自动还款扣款 (Credit / Payment 金额取负数)
-                    if "AUTO PAYMENT DEDUCTION" in section_content:
-                        pay_m = re.search(r'AUTO PAYMENT DEDUCTION[\s\S]*?(\d{2}/\d{2})\s*(\d{2}/\d{2})[\s\S]*?(\d{4})[\s\S]*?([\d,]+\.\d{2})', section_content)
-                        if pay_m:
-                            amt_val = float(pay_m.group(4).replace(',', ''))
-                            all_transactions.append([
-                                period_name, holder_name, card_last4,
-                                pay_m.group(1), pay_m.group(2), "AUTO PAYMENT DEDUCTION",
-                                pay_m.group(3), "", -abs(amt_val), "Credit / Payment"
-                            ])
-                        else:
-                            pay_amt_m = re.search(r'([\d,]+\.\d{2})', section_content)
-                            pay_amt = float(pay_amt_m.group(1).replace(',', '')) if pay_amt_m else 0.0
-                            all_transactions.append([
-                                period_name, holder_name, card_last4,
-                                "07/08", "07/08", "AUTO PAYMENT DEDUCTION",
-                                "0071", "", -abs(pay_amt), "Credit / Payment"
-                            ])
-                    
-                    # 逐行提取交易明细
-                    lines = [re.sub(r'^[|\s]+', '', l).strip() for l in section_content.split('\n') if l.strip()]
-                    ref_indices = [i for i, l in enumerate(lines) if re.search(r'\b\d{23,24}\b', l)]
-                    
-                    for i, r_idx in enumerate(ref_indices):
-                        tx_lines = lines[max(0, r_idx-4):min(len(lines), r_idx+5)]
-                        ref_num = re.search(r'\b(\d{23,24})\b', lines[r_idx]).group(1)
-                        
-                        # 提取日期
-                        dates = []
-                        for l in tx_lines:
-                            dates.extend(re.findall(r'\b(\d{2}/\d{2})\b', l))
-                        post_date = dates[0] if len(dates) > 0 else ""
-                        trans_date = dates[1] if len(dates) > 1 else post_date
-                        
-                        # 提取金额 (如果在 Credit 列，则取负数)
-                        amount = 0.0
-                        is_credit = False
-                        for l in tx_lines:
-                            a_found = re.findall(r'([\d,]+\.\d{2})', l)
-                            if a_found:
-                                amount = float(a_found[-1].replace(',', ''))
-                        
-                        # 判断交易类型
-                        tx_type = "Charge"
-                        if is_credit:
-                            amount = -abs(amount)
-                            tx_type = "Credit"
+                start_pos = hm.end()
+                end_pos = headers[idx+1].start() if idx+1 < len(headers) else len(tx_text)
+                section_content = tx_text[start_pos:end_pos]
+                
+                # AUTO PAYMENT DEDUCTION (Credit / Payment 为负数)
+                if "AUTO PAYMENT DEDUCTION" in section_content:
+                    pay_m = re.search(r'(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+AUTO PAYMENT DEDUCTION\s+(\d+)\s+([\d,]+\.\d{2})', section_content)
+                    if pay_m:
+                        amt_val = float(pay_m.group(4).replace(',', ''))
+                        all_transactions.append([period_name, holder_name, card_last4, pay_m.group(2), pay_m.group(1), "AUTO PAYMENT DEDUCTION", pay_m.group(3), "", -abs(amt_val), "Credit / Payment"])
+                    else:
+                        pay_amt_m = re.search(r'AUTO PAYMENT DEDUCTION[\s\S]*?([\d,]+\.\d{2})', section_content)
+                        pay_amt = float(pay_amt_m.group(1).replace(',', '')) if pay_amt_m else 0.0
+                        all_transactions.append([period_name, holder_name, card_last4, "07/08", "07/08", "AUTO PAYMENT DEDUCTION", "0071", "", -abs(pay_amt), "Credit / Payment"])
 
-                        # 提取 MCC
-                        mcc = ""
-                        for l in tx_lines:
-                            m_found = re.findall(r'\b(\d{4})\b', l)
-                            for m in m_found:
-                                if m not in post_date and m not in trans_date:
-                                    mcc = m
-                                    break
-                            if mcc:
-                                break
-                                
-                        # 提取 PDF 原文 Description
-                        desc_parts = []
-                        for l in tx_lines:
-                            if re.search(r'Account Number|Total Activity|Posting Transaction|Description|Charge|Credit|Page \d|BANK OF AMERICA', l, re.I):
-                                continue
-                            if re.match(r'^\d{2}/\d{2}$', l) or re.match(r'^\d{2}/\d{2}\s+\d{2}/\d{2}$', l):
-                                continue
-                            if re.match(r'^[\$\d,.]+$', l) or re.match(r'^\d{4}$', l) or ref_num in l:
-                                continue
-                                
-                            clean_l = re.sub(r'^\d{2}/\d{2}\s+\d{2}/\d{2}\s*', '', l)
-                            clean_l = re.sub(r'^\d{2}/\d{2}\s*', '', clean_l)
-                            clean_l = re.sub(r'\s*\d{2}/\d{2}$', '', clean_l)
-                            clean_l = re.sub(r'\s*[\$\d,.]+$', '', clean_l)
-                            clean_l = re.sub(r'\s*\d{4}$', '', clean_l)
-                            clean_l = clean_l.strip('|\s')
-                            
-                            if clean_l and re.search(r'[A-Za-z]{2,}', clean_l):
-                                desc_parts.append(clean_l)
-                                
-                        desc = " ".join(desc_parts[:2]) if desc_parts else "Card Charge"
-                        
-                        all_transactions.append([
-                            period_name, holder_name, card_last4,
-                            trans_date, post_date, desc, ref_num, mcc, amount, tx_type
-                        ])
+                # 普通消费交易：PostDate TransDate Description RefNum MCC Amount
+                tx_pattern = r'(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(.+?)\s+(\d{23,24})\s+(\d{4})\s+([\d,]+\.\d{2})'
+                
+                for m in re.finditer(tx_pattern, section_content):
+                    post_d = m.group(1)
+                    trans_d = m.group(2)
+                    raw_desc = m.group(3)
+                    ref_num = m.group(4)
+                    mcc = m.group(5)
+                    amount = float(m.group(6).replace(',', ''))
+                    
+                    # 提取纯净 PDF Description 原文
+                    desc_clean = re.sub(r'\s+', ' ', raw_desc).strip()
+                    desc_clean = re.sub(r'^\d{2}/\d{2}\s+', '', desc_clean)
+                    desc_clean = re.sub(r'Account Number:\s*XXXX-XXXX-XXXX-\d{4}\s*', '', desc_clean)
+                    desc_clean = re.sub(r'Total Activity\s*[\d,.]*\s*', '', desc_clean)
+                    desc_clean = desc_clean.strip()
+                    
+                    all_transactions.append([
+                        period_name, holder_name, card_last4,
+                        trans_d, post_d, desc_clean, ref_num, mcc, amount, "Charge"
+                    ])
 
     return summary_by_period, all_transactions
 
 def generate_excel_bytes(summary_by_period, transactions):
-    """生成 Excel 报表"""
+    """生成与 V3 规范一模一样的 Excel 报表"""
     wb = openpyxl.Workbook()
 
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -177,14 +115,14 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # 清空 A1 到 H2 的全部文字
+    # H1、H2 单元格清空 (A1 到 H2 均为空文本)
     for r in [1, 2]:
         for c in range(1, 9):
             ws_det.cell(row=r, column=c, value="")
 
     last_detail_row = len(transactions) + 3
 
-    # I 列存放求和公式
+    # I 列存放顶端求和公式
     c_s1 = ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
     c_s1.font = bold_font
     c_s1.fill = stat_fill
@@ -226,11 +164,11 @@ def generate_excel_bytes(summary_by_period, transactions):
                 cell.number_format = "$#,##0.00"
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 自动开启表头筛选与冻结
+    # 第 3 行自动下拉筛选与前 3 行冻结
     ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
     ws_det.freeze_panes = "A4"
 
-    # 计算列宽
+    # 计算列宽 (金额 I 列设为紧凑宽度 18)
     for col_idx in range(1, 11):
         col_letter = get_column_letter(col_idx)
         max_len = 0
