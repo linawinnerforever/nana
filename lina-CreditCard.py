@@ -1,13 +1,12 @@
 import io
 import re
-import pypdf
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import streamlit as st
 
 def clean_header_name(raw_name):
-    """提取纯净持卡人姓名（去除 Total Activity 和表头噪音）"""
+    """提取纯净持卡人姓名"""
     if "CRAZY MAPLE STUDIO" in raw_name:
         return "CRAZY MAPLE STUDIO"
     lines = [l.strip() for l in raw_name.split('\n') if l.strip()]
@@ -16,19 +15,47 @@ def clean_header_name(raw_name):
     last_line = re.sub(r'\s*Total\s*Activity.*$', '', last_line, flags=re.IGNORECASE)
     return last_line.strip('|\s')
 
+def extract_pdf_text_from_file(uploaded_file):
+    """多引擎容错提取 PDF 原文，彻底解决 Streamlit 提取 0 条的问题"""
+    full_text = ""
+    
+    # 尝试引擎 1: pypdf
+    try:
+        import pypdf
+        file_bytes = io.BytesIO(uploaded_file.getvalue())
+        reader = pypdf.PdfReader(file_bytes)
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                full_text += t + "\n"
+    except Exception:
+        pass
+
+    # 若引擎 1 未提出来文本，回退至引擎 2: pdfplumber
+    if not full_text.strip():
+        try:
+            import pdfplumber
+            file_bytes = io.BytesIO(uploaded_file.getvalue())
+            with pdfplumber.open(file_bytes) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        full_text += t + "\n"
+        except Exception:
+            pass
+
+    return full_text
+
 def extract_pdf_data(uploaded_files):
     """精准解析 Bank of America PDF 账单"""
     all_transactions = []
     summary_by_period = {}
 
     for uploaded_file in uploaded_files:
-        file_bytes = io.BytesIO(uploaded_file.getvalue())
-        reader = pypdf.PdfReader(file_bytes)
-        
-        full_text = ""
-        for page in reader.pages:
-            full_text += (page.extract_text() or "") + "\n"
-
+        full_text = extract_pdf_text_from_file(uploaded_file)
+        if not full_text:
+            continue
+            
         # 1. 动态提取账单周期
         period_match = re.search(r'([A-Za-z]+\s+\d{2},\s*\d{4}\s*-\s*[A-Za-z]+\s+\d{2},\s*\d{4})', full_text)
         period_name = period_match.group(1).strip() if period_match else "Unknown Period"
@@ -115,14 +142,14 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # 清空 A1 到 H2
+    # H1、H2 单元格清空 (A1 到 H2 均为空文本)
     for r in [1, 2]:
         for c in range(1, 9):
             ws_det.cell(row=r, column=c, value="")
 
     last_detail_row = len(transactions) + 3
 
-    # I 列存放求和公式
+    # I 列存放顶端求和公式
     c_s1 = ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
     c_s1.font = bold_font
     c_s1.fill = stat_fill
@@ -141,7 +168,7 @@ def generate_excel_bytes(summary_by_period, transactions):
             cell.border = thin_border
             cell.fill = stat_fill
 
-    # 第 3 行为表头
+    # 第 3 行为交易明细表头
     det_headers = ["账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", "MCC", "金额 (Amount)", "交易类型 (Type)"]
     for c_idx, h_text in enumerate(det_headers, 1):
         cell = ws_det.cell(row=3, column=c_idx, value=h_text)
@@ -150,7 +177,7 @@ def generate_excel_bytes(summary_by_period, transactions):
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-    # 数据从第 4 行写入
+    # 数据从第 4 行开始写入
     for r_idx, r_data in enumerate(transactions, start=4):
         for c_idx, val in enumerate(r_data, start=1):
             cell = ws_det.cell(row=r_idx, column=c_idx, value=val)
@@ -164,11 +191,11 @@ def generate_excel_bytes(summary_by_period, transactions):
                 cell.number_format = "$#,##0.00"
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 自动下拉筛选与前 3 行冻结
+    # 第 3 行自动下拉筛选与前 3 行冻结
     ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
     ws_det.freeze_panes = "A4"
 
-    # 设置整洁列宽
+    # 计算列宽 (金额 I 列设为紧凑宽度 18)
     for col_idx in range(1, 11):
         col_letter = get_column_letter(col_idx)
         max_len = 0
