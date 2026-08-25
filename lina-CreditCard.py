@@ -7,24 +7,21 @@ from openpyxl.utils import get_column_letter
 import streamlit as st
 
 def extract_pdf_data(uploaded_files):
-    """从 Streamlit 上传的多个 PDF 账单中提取数据"""
+    """自适应提取上传的 PDF 账单数据"""
     all_transactions = []
     summary_by_period = {}
 
     for uploaded_file in uploaded_files:
-        # 打开 Streamlit 传入的 BytesIO 文件对象
-        with pdfplumber.open(uploaded_file) as pdf:
-            period_name = "Unknown Period"
+        # 重置文件指针并读取字节流
+        file_bytes = io.BytesIO(uploaded_file.getvalue())
+        
+        with pdfplumber.open(file_bytes) as pdf:
+            # 读取全部页面的文本内容
+            full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
             
-            # 1. 动态提取账单周期字符串
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
-                    continue
-                period_match = re.search(r'([A-Za-z]+\s+\d{2},\s*\d{4}\s*-\s*[A-Za-z]+\s+\d{2},\s*\d{4})', text)
-                if period_match:
-                    period_name = period_match.group(1).strip()
-                    break
+            # 1. 动态提取账单周期 (例: July 02, 2026 - July 15, 2026)
+            period_match = re.search(r'([A-Za-z]+\s+\d{2},\s*\d{4}\s*-\s*[A-Za-z]+\s+\d{2},\s*\d{4})', full_text)
+            period_name = period_match.group(1).strip() if period_match else "Unknown Period"
             
             if period_name not in summary_by_period:
                 summary_by_period[period_name] = {}
@@ -32,55 +29,75 @@ def extract_pdf_data(uploaded_files):
             current_cardholder = None
             current_card_last4 = None
 
-            # 2. 逐页读取明细与汇总数据
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text:
+            # 2. 逐行自适应解析文本
+            lines = [l.strip() for l in full_text.split('\n') if l.strip()]
+            for line in lines:
+                # 匹配 Cardholder Activity Summary 静态汇总数 (例: BHAGAT, KRUTI V XXXX-XXXX-XXXX-4574 ... 16,954.88)
+                sum_m = re.search(r'([A-Z,\s]+)\s+XXXX-XXXX-XXXX-(\d{4})\s+[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)', line)
+                if sum_m:
+                    holder = sum_m.group(1).strip()
+                    total_act = float(sum_m.group(3).replace(',', ''))
+                    summary_by_period[period_name][holder] = total_act
                     continue
-                
-                lines = text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    
-                    # 匹配持卡人 Header
-                    card_match = re.search(r'([A-Z,\s]+)\s+Account Number:\s*XXXX-XXXX-XXXX-(\d{4})', line)
-                    if card_match:
-                        current_cardholder = card_match.group(1).strip()
-                        current_card_last4 = card_match.group(2).strip()
-                        continue
-                    
-                    # 提取 PDF Summary 区域静态数值
-                    summary_match = re.search(r'^([A-Z,\s]+)\s+XXXX-XXXX-XXXX-\d{4}\s+[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)\s+([\d,.]+)$', line)
-                    if summary_match:
-                        holder_name = summary_match.group(1).strip()
-                        total_act = float(summary_match.group(3).replace(',', ''))
-                        summary_by_period[period_name][holder_name] = total_act
 
-                    # 提取普通交易明细行
-                    tx_match = re.search(r'^(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(.+?)\s+(\d{10,})\s+(\d{4})\s+([\d,]+\.\d{2})$', line)
-                    if tx_match and current_cardholder:
-                        all_transactions.append([
-                            period_name, current_cardholder, current_card_last4,
-                            tx_match.group(1), tx_match.group(2), tx_match.group(3),
-                            tx_match.group(4), tx_match.group(5),
-                            float(tx_match.group(6).replace(',', '')), "Charge"
-                        ])
+                # 匹配交易区间的持卡人 Header (例: BHAGAT, KRUTI V Account Number: XXXX-XXXX-XXXX-4574)
+                card_m = re.search(r'([A-Z,\s]+)\s+Account Number:\s*XXXX-XXXX-XXXX-(\d{4})', line)
+                if card_m:
+                    current_cardholder = card_m.group(1).strip()
+                    current_card_last4 = card_m.group(2).strip()
+                    continue
 
-                    # 提取主账户自动还款扣款行
-                    pay_match = re.search(r'AUTO PAYMENT DEDUCTION\s+(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(\d+)\s+([\d,]+\.\d{2})', line)
-                    if pay_match:
+                # 匹配主账户自动还款行
+                if "AUTO PAYMENT DEDUCTION" in line:
+                    m = re.search(r'(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(\d+)?\s*([\d,]+\.\d{2})', line)
+                    if m:
                         all_transactions.append([
                             period_name, "CRAZY MAPLE STUDIO", "2273",
-                            pay_match.group(1), pay_match.group(2), "AUTO PAYMENT DEDUCTION",
-                            pay_match.group(3), "", float(pay_match.group(4).replace(',', '')), "Credit / Payment"
+                            m.group(1), m.group(2), "AUTO PAYMENT DEDUCTION",
+                            m.group(3) or "0071", "", float(m.group(4).replace(',', '')), "Credit / Payment"
                         ])
+                    continue
+
+                # 自适应匹配普通交易明细 (无视商户名、日期、MCC 的提取先后顺序)
+                dates = re.findall(r'\b(\d{2}/\d{2})\b', line)
+                ref_match = re.search(r'\b(\d{10,})\b', line)
+                amt_match = re.search(r'([\d,]+\.\d{2})\s*$', line)
+
+                if len(dates) >= 2 and ref_match and amt_match and current_cardholder:
+                    post_date, trans_date = dates[0], dates[1]
+                    ref_num = ref_match.group(1)
+                    amount = float(amt_match.group(1).replace(',', ''))
+
+                    # 提取 4 位 MCC 码
+                    mcc = ""
+                    all_4digits = re.findall(r'\b(\d{4})\b', line)
+                    for d in all_4digits:
+                        if d not in post_date and d not in trans_date:
+                            mcc = d
+                            break
+
+                    # 清理生成标准商户描述
+                    desc = line
+                    desc = desc.replace(ref_num, '')
+                    for d in dates[:2]:
+                        desc = desc.replace(d, '')
+                    if mcc:
+                        desc = desc.replace(mcc, '')
+                    desc = re.sub(r'[\d,]+\.\d{2}\s*$', '', desc)
+                    desc = re.sub(r'\s+', ' ', desc).strip()
+
+                    all_transactions.append([
+                        period_name, current_cardholder, current_card_last4,
+                        trans_date, post_date, desc, ref_num, mcc, amount, "Charge"
+                    ])
 
     return summary_by_period, all_transactions
 
 def generate_excel_bytes(summary_by_period, transactions):
-    """在内存中生成 Excel 文件并返回 Bytes 数据"""
+    """在内存中生成包含 汇总 Dashboard 和 交易明细 的 Excel 文件"""
     wb = openpyxl.Workbook()
 
+    # 统一视觉样式 (深蓝表头 #1F4E78，白字粗体)
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     data_font = Font(name="Calibri", size=10)
@@ -90,7 +107,9 @@ def generate_excel_bytes(summary_by_period, transactions):
     thin_border = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
     total_border = Border(top=Side(border_style="thin", color="000000"), bottom=Side(border_style="double", color="000000"), left=thin_border_side, right=thin_border_side)
 
-    # 1. 明细页签
+    # -------------------------------------------------------------
+    # 1. 建立「交易明细」 Sheet
+    # -------------------------------------------------------------
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
@@ -122,7 +141,9 @@ def generate_excel_bytes(summary_by_period, transactions):
         col_letter = get_column_letter(col[0].column)
         ws_det.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-    # 2. 首页 Dashboard 页签
+    # -------------------------------------------------------------
+    # 2. 建立「汇总 Dashboard」 Sheet
+    # -------------------------------------------------------------
     ws_sum = wb.active
     ws_sum.title = "汇总 Dashboard"
     ws_sum.views.sheetView[0].showGridLines = True
@@ -182,7 +203,9 @@ def generate_excel_bytes(summary_by_period, transactions):
     g_cell.alignment = Alignment(horizontal="right", vertical="center")
     g_cell.border = total_border
 
-    # 3. Check 校验行
+    # -------------------------------------------------------------
+    # 3. 增加 Check 校验行
+    # -------------------------------------------------------------
     check_row = tot_row + 2
     ws_sum.cell(row=check_row, column=1, value="check").font = bold_font
     c_check = ws_sum.cell(row=check_row, column=len(periods) + 2)
@@ -196,14 +219,13 @@ def generate_excel_bytes(summary_by_period, transactions):
         col_l = get_column_letter(col_i)
         ws_sum.column_dimensions[col_l].width = 30
 
-    # 将 Excel 写入内存流，供 Streamlit 网页下载
     excel_stream = io.BytesIO()
     wb.save(excel_stream)
     excel_stream.seek(0)
     return excel_stream
 
 # -------------------------------------------------------------
-# Streamlit 界面逻辑
+# Streamlit 网页端配置
 # -------------------------------------------------------------
 st.set_page_config(page_title="信用卡账单自动解析小工具", page_icon="📄")
 st.title("📄 信用卡 PDF 账单自动解析工具")
@@ -218,9 +240,8 @@ if uploaded_files:
                 summary_data, detail_data = extract_pdf_data(uploaded_files)
                 excel_bytes = generate_excel_bytes(summary_data, detail_data)
                 
-                st.success(f"成功解析 {len(uploaded_files)} 个 PDF 账单！已提取 {len(detail_data)} 条明细。")
+                st.success(f"成功解析 {len(uploaded_files)} 个 PDF 账单！已提取 {len(detail_data)} 条交易明细。")
                 
-                # 提供 Excel 下载按钮
                 st.download_button(
                     label="📥 点击下载 Excel 汇总表格",
                     data=excel_bytes,
