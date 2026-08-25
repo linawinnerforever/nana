@@ -215,7 +215,7 @@ def _parse_section_content(content, period, holder_name, card_last4,
                 period, holder_name, card_last4,
                 trans_date, post_date,
                 "AUTO PAYMENT DEDUCTION", ref_num, "",
-                -abs(amount), "Credit / Payment"
+                -abs(amount), "Credit"
             ])
             i += 1
             continue
