@@ -7,7 +7,7 @@ from openpyxl.utils import get_column_letter
 import streamlit as st
 
 def clean_header_name(raw_name):
-    """提取纯净持卡人姓名"""
+    """提取纯净持卡人姓名（去除 Total Activity 和表头噪音）"""
     if "CRAZY MAPLE STUDIO" in raw_name:
         return "CRAZY MAPLE STUDIO"
     lines = [l.strip() for l in raw_name.split('\n') if l.strip()]
@@ -17,7 +17,7 @@ def clean_header_name(raw_name):
     return last_line.strip('|\s')
 
 def extract_pdf_data(uploaded_files):
-    """精准解析 Bank of America PDF 账单 (与 V3 版内容100%保持一致)"""
+    """精准解析 Bank of America PDF 账单"""
     all_transactions = []
     summary_by_period = {}
 
@@ -36,7 +36,7 @@ def extract_pdf_data(uploaded_files):
         if period_name not in summary_by_period:
             summary_by_period[period_name] = {}
 
-        # 2. 从 Cardholder Activity Summary 提取持卡人汇总
+        # 2. 从 Cardholder Activity Summary 提取持卡人汇总数据
         if "Cardholder Activity Summary" in full_text:
             sum_section = full_text.split("Cardholder Activity Summary")[1].split("Transactions")[0]
             sum_matches = re.findall(r'([A-Z,\s]{3,35})XXXX-XXXX-XXXX-(\d{4})[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)\s+([\d,.]+)', sum_section)
@@ -59,7 +59,7 @@ def extract_pdf_data(uploaded_files):
                 end_pos = headers[idx+1].start() if idx+1 < len(headers) else len(tx_text)
                 section_content = tx_text[start_pos:end_pos]
                 
-                # AUTO PAYMENT DEDUCTION (Credit / Payment 为负数)
+                # AUTO PAYMENT DEDUCTION (Credit / Payment 金额取负数)
                 if "AUTO PAYMENT DEDUCTION" in section_content:
                     pay_m = re.search(r'(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+AUTO PAYMENT DEDUCTION\s+(\d+)\s+([\d,]+\.\d{2})', section_content)
                     if pay_m:
@@ -115,14 +115,14 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # H1、H2 单元格清空 (A1 到 H2 均为空文本)
+    # 清空 A1 到 H2
     for r in [1, 2]:
         for c in range(1, 9):
             ws_det.cell(row=r, column=c, value="")
 
     last_detail_row = len(transactions) + 3
 
-    # I 列存放顶端求和公式
+    # I 列存放求和公式
     c_s1 = ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
     c_s1.font = bold_font
     c_s1.fill = stat_fill
@@ -141,7 +141,7 @@ def generate_excel_bytes(summary_by_period, transactions):
             cell.border = thin_border
             cell.fill = stat_fill
 
-    # 第 3 行为交易明细表头
+    # 第 3 行为表头
     det_headers = ["账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", "MCC", "金额 (Amount)", "交易类型 (Type)"]
     for c_idx, h_text in enumerate(det_headers, 1):
         cell = ws_det.cell(row=3, column=c_idx, value=h_text)
@@ -150,7 +150,7 @@ def generate_excel_bytes(summary_by_period, transactions):
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = thin_border
 
-    # 数据从第 4 行开始写入
+    # 数据从第 4 行写入
     for r_idx, r_data in enumerate(transactions, start=4):
         for c_idx, val in enumerate(r_data, start=1):
             cell = ws_det.cell(row=r_idx, column=c_idx, value=val)
@@ -164,11 +164,11 @@ def generate_excel_bytes(summary_by_period, transactions):
                 cell.number_format = "$#,##0.00"
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 第 3 行自动下拉筛选与前 3 行冻结
+    # 自动下拉筛选与前 3 行冻结
     ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
     ws_det.freeze_panes = "A4"
 
-    # 计算列宽 (金额 I 列设为紧凑宽度 18)
+    # 设置整洁列宽
     for col_idx in range(1, 11):
         col_letter = get_column_letter(col_idx)
         max_len = 0
