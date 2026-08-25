@@ -53,11 +53,13 @@ _AUTO_PAY_RE = re.compile(
     r'AUTO PAYMENT DEDUCTION\s+(\d+)\s+([\d,]+\.\d{2})'
 )
 
-# 正则: 普通交易行 PostDate TransDate Description RefNum(20+) MCC(4) Amount
+# 正则: 普通交易行 PostDate TransDate Description RefNum(20+) MCC(4) Charge [Credit]
 # (?<![/\d]) 防止从 "07/31/26" 中误匹配 "31/26" 为日期
+# 末尾可选 Credit 金额: 若 Credit 列有数据, 金额取 Credit 的负数
 _TX_RE = re.compile(
     r'(?<![/\d])(\d{2}/\d{2})\s+(?<![/\d])(\d{2}/\d{2})\s+'
     r'(.+?)\s+(\d{20,})\s+(\d{4})\s+([\d,]+\.\d{2})'
+    r'(?:\s+(-?[\d,]+\.\d{2}))?'
 )
 
 # 正则: 外币换算续行  "07/03  431.28  SGD  1.279686"
@@ -170,7 +172,17 @@ def _parse_section_content(content, period, holder_name, card_last4):
         if m:
             post_date, trans_date = m.group(1), m.group(2)
             raw_desc, ref_num, mcc = m.group(3), m.group(4), m.group(5)
-            amount = float(m.group(6).replace(',', ''))
+            charge_str = m.group(6)
+            credit_str = m.group(7) if m.lastindex and m.lastindex >= 7 else None
+
+            # Credit 列有数据 → 金额取 Credit 的负数
+            if credit_str:
+                amount = -abs(float(credit_str.replace(',', '')))
+                tx_type = "Credit"
+            else:
+                amount = float(charge_str.replace(',', ''))
+                tx_type = "Charge"
+
             desc = re.sub(r'\s+', ' ', raw_desc).strip()
 
             # 向后收集续行，附加到描述
@@ -195,7 +207,7 @@ def _parse_section_content(content, period, holder_name, card_last4):
                 period, holder_name, card_last4,
                 trans_date, post_date,
                 desc, ref_num, mcc,
-                amount, "Charge"
+                amount, tx_type
             ])
             continue
 
