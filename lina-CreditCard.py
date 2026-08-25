@@ -15,14 +15,15 @@ def clean_header_name(raw_name):
     last_line = re.sub(r'\s*Total\s*Activity.*$', '', last_line, flags=re.IGNORECASE)
     return last_line.strip('|\s')
 
-def extract_pdf_text_from_file(uploaded_file):
-    """多引擎容错提取 PDF 原文，彻底解决 Streamlit 提取 0 条的问题"""
+def extract_pdf_text_safe(uploaded_file):
+    """强制 seek(0) 安全读取 PDF 文本，无视环境差异"""
     full_text = ""
     
-    # 尝试引擎 1: pypdf
+    # 方法 1: 使用 pypdf 读取
     try:
         import pypdf
         file_bytes = io.BytesIO(uploaded_file.getvalue())
+        file_bytes.seek(0)
         reader = pypdf.PdfReader(file_bytes)
         for page in reader.pages:
             t = page.extract_text()
@@ -31,11 +32,12 @@ def extract_pdf_text_from_file(uploaded_file):
     except Exception:
         pass
 
-    # 若引擎 1 未提出来文本，回退至引擎 2: pdfplumber
+    # 方法 2: 若未提出来则回退至 pdfplumber
     if not full_text.strip():
         try:
             import pdfplumber
             file_bytes = io.BytesIO(uploaded_file.getvalue())
+            file_bytes.seek(0)
             with pdfplumber.open(file_bytes) as pdf:
                 for page in pdf.pages:
                     t = page.extract_text()
@@ -52,8 +54,8 @@ def extract_pdf_data(uploaded_files):
     summary_by_period = {}
 
     for uploaded_file in uploaded_files:
-        full_text = extract_pdf_text_from_file(uploaded_file)
-        if not full_text:
+        full_text = extract_pdf_text_safe(uploaded_file)
+        if not full_text.strip():
             continue
             
         # 1. 动态提取账单周期
@@ -63,7 +65,7 @@ def extract_pdf_data(uploaded_files):
         if period_name not in summary_by_period:
             summary_by_period[period_name] = {}
 
-        # 2. 从 Cardholder Activity Summary 提取持卡人汇总数据
+        # 2. 从 Cardholder Activity Summary 模块提取持卡人汇总数据
         if "Cardholder Activity Summary" in full_text:
             sum_section = full_text.split("Cardholder Activity Summary")[1].split("Transactions")[0]
             sum_matches = re.findall(r'([A-Z,\s]{3,35})XXXX-XXXX-XXXX-(\d{4})[\d,.]+\s+[\d,.]+\s+[\d,.]+\s+([\d,.]+)\s+([\d,.]+)', sum_section)
@@ -123,7 +125,7 @@ def extract_pdf_data(uploaded_files):
     return summary_by_period, all_transactions
 
 def generate_excel_bytes(summary_by_period, transactions):
-    """生成与 V3 规范一模一样的 Excel 报表"""
+    """生成 Excel 报表流"""
     wb = openpyxl.Workbook()
 
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -142,14 +144,14 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # H1、H2 单元格清空 (A1 到 H2 均为空文本)
+    # H1、H2 单元格清空
     for r in [1, 2]:
         for c in range(1, 9):
             ws_det.cell(row=r, column=c, value="")
 
-    last_detail_row = len(transactions) + 3
+    last_detail_row = max(len(transactions) + 3, 4)
 
-    # I 列存放顶端求和公式
+    # I 列存放求和公式
     c_s1 = ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
     c_s1.font = bold_font
     c_s1.fill = stat_fill
@@ -168,7 +170,7 @@ def generate_excel_bytes(summary_by_period, transactions):
             cell.border = thin_border
             cell.fill = stat_fill
 
-    # 第 3 行为交易明细表头
+    # 第 3 行为表头
     det_headers = ["账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", "MCC", "金额 (Amount)", "交易类型 (Type)"]
     for c_idx, h_text in enumerate(det_headers, 1):
         cell = ws_det.cell(row=3, column=c_idx, value=h_text)
@@ -191,11 +193,12 @@ def generate_excel_bytes(summary_by_period, transactions):
                 cell.number_format = "$#,##0.00"
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 第 3 行自动下拉筛选与前 3 行冻结
-    ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
+    # 自动下拉筛选与前 3 行冻结
+    if len(transactions) > 0:
+        ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
     ws_det.freeze_panes = "A4"
 
-    # 计算列宽 (金额 I 列设为紧凑宽度 18)
+    # 设置列宽
     for col_idx in range(1, 11):
         col_letter = get_column_letter(col_idx)
         max_len = 0
@@ -309,7 +312,10 @@ if uploaded_files:
                 summary_data, detail_data = extract_pdf_data(uploaded_files)
                 excel_bytes = generate_excel_bytes(summary_data, detail_data)
                 
-                st.success(f"成功解析 {len(uploaded_files)} 个 PDF 账单！已提取 {len(detail_data)} 条交易明细。")
+                if len(detail_data) > 0:
+                    st.success(f"成功解析 {len(uploaded_files)} 个 PDF 账单！已提取 {len(detail_data)} 条交易明细。")
+                else:
+                    st.warning("已读取账单文件，但未提取到交易明细，请确认 PDF 是否为 Bank of America 标准 Commercial Card 账单。")
                 
                 st.download_button(
                     label="📥 点击下载 Excel 汇总表格",
@@ -318,4 +324,4 @@ if uploaded_files:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             except Exception as e:
-                st.error(f"解析过程出错，请检查 PDF 格式是否正确。错误详情: {e}")
+                st.error(f"解析过程出错，错误详情: {e}")
