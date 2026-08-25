@@ -3,3 +3,4 @@ xlsxwriter
 openpyxl
 pypdf
 xlsxwriter
+pdfplumber
