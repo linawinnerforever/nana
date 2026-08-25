@@ -13,7 +13,7 @@ def clean_holder_name(name):
     return name.strip('|\s')
 
 def extract_pdf_data(uploaded_files):
-    """精确解析 PDF 账单数据"""
+    """从 Bank of America PDF 账单中精准提取数据"""
     all_transactions = []
     summary_by_period = {}
 
@@ -30,7 +30,7 @@ def extract_pdf_data(uploaded_files):
             if period_name not in summary_by_period:
                 summary_by_period[period_name] = {}
 
-            # 2. 从 Cardholder Activity Summary 精准提取持卡人与最终金额
+            # 2. 从 Cardholder Activity Summary 模块提取持卡人与最终金额
             if "Cardholder Activity Summary" in full_text:
                 parts = full_text.split("Cardholder Activity Summary")
                 for part in parts[1:]:
@@ -87,7 +87,7 @@ def extract_pdf_data(uploaded_files):
                                 "0071", "", pay_amt, "Credit / Payment"
                             ])
                     
-                    # 逐行精确提取交易明细与纯净描述
+                    # 逐行精确提取交易明细与纯净商户描述
                     lines = [re.sub(r'^[|\s]+', '', l).strip() for l in section_content.split('\n') if l.strip()]
                     ref_indices = [i for i, l in enumerate(lines) if re.search(r'\b\d{23,24}\b', l)]
                     
@@ -123,7 +123,7 @@ def extract_pdf_data(uploaded_files):
                             if mcc:
                                 break
                                 
-                        # 提取纯净交易描述（过滤掉日期、MCC、卡号、金额）
+                        # 精确提取纯净商户交易描述
                         desc_parts = []
                         for l in tx_lines:
                             if re.search(r'Account Number|Total Activity|Posting Transaction|Description|Charge|Credit|Page \d|BANK OF AMERICA', l, re.I):
@@ -172,18 +172,31 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # 根据需求 1：清空 A1 与 A2 单元格
+    # 清空 A1 与 A2 单元格
     ws_det.cell(row=1, column=1, value="")
     ws_det.cell(row=2, column=1, value="")
 
-    # I 列添加顶部求和公式
-    c_s1 = ws_det.cell(row=1, column=9, value='=SUMIF(B4:B5000, "CRAZY MAPLE STUDIO*", I4:I5000)')
+    # H 列放置清晰统计标签
+    c_lbl1 = ws_det.cell(row=1, column=8, value="CRAZY MAPLE STUDIO 金额合计:")
+    c_lbl1.font = bold_font
+    c_lbl1.alignment = Alignment(horizontal="right", vertical="center")
+    c_lbl1.fill = stat_fill
+
+    c_lbl2 = ws_det.cell(row=2, column=8, value="非 CRAZY MAPLE STUDIO 金额合计:")
+    c_lbl2.font = bold_font
+    c_lbl2.alignment = Alignment(horizontal="right", vertical="center")
+    c_lbl2.fill = stat_fill
+
+    last_detail_row = len(transactions) + 3
+
+    # I 列存放求和公式
+    c_s1 = ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
     c_s1.font = bold_font
     c_s1.fill = stat_fill
     c_s1.number_format = "$#,##0.00"
     c_s1.alignment = Alignment(horizontal="right", vertical="center")
 
-    c_s2 = ws_det.cell(row=2, column=9, value='=SUMIFS(I4:I5000, B4:B5000, "<>CRAZY MAPLE STUDIO*", J4:J5000, "Charge")')
+    c_s2 = ws_det.cell(row=2, column=9, value=f'=SUMIFS(I4:I{last_detail_row}, B4:B{last_detail_row}, "<>CRAZY MAPLE STUDIO*", J4:J{last_detail_row}, "Charge")')
     c_s2.font = bold_font
     c_s2.fill = stat_fill
     c_s2.number_format = "$#,##0.00"
@@ -191,8 +204,9 @@ def generate_excel_bytes(summary_by_period, transactions):
 
     for r in [1, 2]:
         for col_i in range(1, 11):
-            ws_det.cell(row=r, column=col_i).border = thin_border
-            ws_det.cell(row=r, column=col_i).fill = stat_fill
+            cell = ws_det.cell(row=r, column=col_i)
+            cell.border = thin_border
+            cell.fill = stat_fill
 
     # 第 3 行为交易明细表头 Header
     det_headers = ["账单周期", "持卡人 / 账户", "卡号末四位", "交易日 (Trans Date)", "记账日 (Post Date)", "交易描述 (Description)", "参考号 (Reference No)", "MCC", "金额 (Amount)", "交易类型 (Type)"]
@@ -217,22 +231,30 @@ def generate_excel_bytes(summary_by_period, transactions):
                 cell.number_format = "$#,##0.00"
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
-    last_detail_row = len(transactions) + 3
-
-    # 更新顶部公式的数据最大有效行
-    ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
-    ws_det.cell(row=2, column=9, value=f'=SUMIFS(I4:I{last_detail_row}, B4:B{last_detail_row}, "<>CRAZY MAPLE STUDIO*", J4:J{last_detail_row}, "Charge")')
-
-    # 根据需求 3：给第 3 行表头开启自动筛选下拉按钮 (AutoFilter)
+    # 第 3 行开启自动下拉筛选按钮 (AutoFilter)
     ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
 
-    # 自动冻结前 3 行
+    # 自动冻结前 3 行 (A4)
     ws_det.freeze_panes = "A4"
 
-    for col in ws_det.columns:
-        max_len = max(len(str(cell.value or '')) for cell in col)
-        col_letter = get_column_letter(col[0].column)
-        ws_det.column_dimensions[col_letter].width = max(max_len + 3, 15)
+    # 精确计算列宽 (金额列 I 不再过宽)
+    for col_idx in range(1, 11):
+        col_letter = get_column_letter(col_idx)
+        max_len = 0
+        for row_idx in range(3, last_detail_row + 1):
+            val = ws_det.cell(row=row_idx, column=col_idx).value
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        
+        header_len = len(str(det_headers[col_idx - 1]))
+        max_len = max(max_len, header_len)
+        
+        if col_idx == 9:  # 金额列紧凑列宽
+            ws_det.column_dimensions[col_letter].width = max(max_len + 5, 18)
+        elif col_idx == 6:  # 交易描述列
+            ws_det.column_dimensions[col_letter].width = min(max_len + 4, 55)
+        else:
+            ws_det.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
     # -------------------------------------------------------------
     # 2. 建立「汇总 Dashboard」 Sheet
@@ -296,7 +318,7 @@ def generate_excel_bytes(summary_by_period, transactions):
     g_cell.alignment = Alignment(horizontal="right", vertical="center")
     g_cell.border = total_border
 
-    # 3. Check 校验行 (联动的为交易明细表 I2 单元格：非 CRAZY MAPLE STUDIO 金额合计)
+    # 3. Check 校验行 (交易明细表除了 CRAZY MAPLE STUDIO 的金额 I2 减去 首页合计 Total)
     check_row = tot_row + 2
     ws_sum.cell(row=check_row, column=1, value="check").font = bold_font
     c_check = ws_sum.cell(row=check_row, column=len(periods) + 2)
