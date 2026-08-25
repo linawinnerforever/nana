@@ -6,12 +6,14 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import streamlit as st
 
+def clean_holder_name(name):
+    """剔除持卡人姓名中误带的 Total Activity 后缀"""
+    name = re.sub(r'\s*Total\s*Activity.*$', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'[\d,.]+$', '', name)
+    return name.strip('|\s')
+
 def extract_pdf_data(uploaded_files):
-    """
-    精确提取 Bank of America PDF 账单数据:
-    1. Cardholder Activity Summary 模块的数据
-    2. 交易明细数据 (准确匹配持卡人与交易描述)
-    """
+    """精确解析 PDF 账单数据"""
     all_transactions = []
     summary_by_period = {}
 
@@ -21,47 +23,46 @@ def extract_pdf_data(uploaded_files):
         with pdfplumber.open(file_bytes) as pdf:
             full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
             
-            # 1. 动态提取账单周期 (例如: July 02, 2026 - July 15, 2026)
+            # 1. 动态提取账单周期
             period_match = re.search(r'([A-Za-z]+\s+\d{2},\s*\d{4}\s*-\s*[A-Za-z]+\s+\d{2},\s*\d{4})', full_text)
             period_name = period_match.group(1).strip() if period_match else "Unknown Period"
             
             if period_name not in summary_by_period:
                 summary_by_period[period_name] = {}
 
-            # 2. 从 Cardholder Activity Summary 模块精准提取持卡人与金额 (支持 Unicode 字符)
+            # 2. 从 Cardholder Activity Summary 精准提取持卡人与最终金额
             if "Cardholder Activity Summary" in full_text:
                 parts = full_text.split("Cardholder Activity Summary")
                 for part in parts[1:]:
                     sub_text = part.split("Transactions")[0]
-                    # 匹配姓名（非数字行）和卡号
-                    matches = list(re.finditer(r'([^\n\d]{3,35})\n[\s\|]*XXXX-XXXX-XXXX-(\d{4})', sub_text))
-                    for idx, cm in enumerate(matches):
-                        raw_name = cm.group(1).strip()
-                        lines = [l.strip('|\s') for l in raw_name.split('\n') if l.strip('|\s')]
-                        holder_name = lines[-1] if lines else raw_name
+                    card_matches = list(re.finditer(r'XXXX-XXXX-XXXX-(\d{4})', sub_text))
+                    for idx, cm in enumerate(card_matches):
+                        c_pos = cm.start()
+                        text_before = sub_text[max(0, c_pos-150):c_pos]
+                        lines_before = [l.strip('|\s') for l in text_before.split('\n') if l.strip('|\s')]
                         
-                        if any(k in holder_name for k in ["Account Number", "Credit Limit", "Total Activity", "Purchases", "Credits", "Cash", "BANK OF AMERICA"]):
-                            continue
-                            
-                        start_pos = cm.end()
-                        end_pos = matches[idx+1].start() if idx+1 < len(matches) else len(sub_text)
-                        block_text = sub_text[start_pos:end_pos]
+                        holder_name = "UNKNOWN"
+                        for l in reversed(lines_before):
+                            if re.search(r'[A-Za-z]{2,}', l) and not re.search(r'Account Number|Credit Limit|Total Activity|Purchases|Credits|Cash|Page \d|BANK OF AMERICA', l):
+                                holder_name = clean_holder_name(l)
+                                break
                         
-                        amounts = re.findall(r'([\d,]+\.\d{2})', block_text)
-                        if amounts:
+                        end_pos = card_matches[idx+1].start() if idx+1 < len(card_matches) else len(sub_text)
+                        text_after = sub_text[c_pos:end_pos]
+                        amounts = re.findall(r'([\d,]+\.\d{2})', text_after)
+                        if amounts and holder_name != "UNKNOWN":
                             summary_by_period[period_name][holder_name] = float(amounts[-1].replace(',', ''))
 
             # 3. 精准解析 Transactions 交易区域
             if "Transactions" in full_text:
                 tx_text = full_text.split("Transactions", 1)[1]
-                # 精确正则：不包含数字，防止金额尾数(如 .25) 混入名字
                 header_regex = r'([^\n\d]{3,40})\n\s*Account Number:\s*XXXX-XXXX-XXXX-(\d{4})'
                 header_matches = list(re.finditer(header_regex, tx_text))
                 
                 for idx, hm in enumerate(header_matches):
                     raw_name = hm.group(1).strip('|\s')
                     clean_lines = [l.strip('|\s') for l in raw_name.split('\n') if l.strip('|\s')]
-                    holder_name = clean_lines[-1] if clean_lines else raw_name
+                    holder_name = clean_holder_name(clean_lines[-1] if clean_lines else raw_name)
                     card_last4 = hm.group(2).strip()
                     
                     start_pos = hm.end()
@@ -86,38 +87,63 @@ def extract_pdf_data(uploaded_files):
                                 "0071", "", pay_amt, "Credit / Payment"
                             ])
                     
-                    # 匹配普通交易 (基于 23 位参考号做精确关联)
-                    ref_matches = list(re.finditer(r'\b(\d{23,24})\b', section_content))
-                    for r_idx, rm in enumerate(ref_matches):
-                        ref_num = rm.group(1)
-                        blk_start = ref_matches[r_idx-1].end() if r_idx > 0 else 0
-                        blk_end = ref_matches[r_idx+1].start() if r_idx+1 < len(ref_matches) else len(section_content)
+                    # 逐行精确提取交易明细与纯净描述
+                    lines = [re.sub(r'^[|\s]+', '', l).strip() for l in section_content.split('\n') if l.strip()]
+                    ref_indices = [i for i, l in enumerate(lines) if re.search(r'\b\d{23,24}\b', l)]
+                    
+                    for i, r_idx in enumerate(ref_indices):
+                        prev_idx = ref_indices[i-1] if i > 0 else 0
+                        next_idx = ref_indices[i+1] if i+1 < len(ref_indices) else len(lines)
                         
-                        prev_to_curr = section_content[blk_start:rm.start()]
-                        curr_to_next = section_content[rm.start():blk_end]
-                        combined_text = prev_to_curr[-200:] + curr_to_next[:200]
+                        tx_lines = lines[max(0, r_idx-4):min(len(lines), r_idx+5)]
+                        ref_num = re.search(r'\b(\d{23,24})\b', lines[r_idx]).group(1)
                         
                         # 提取日期
-                        dates = re.findall(r'\b(\d{2}/\d{2})\b', combined_text)
+                        dates = []
+                        for l in tx_lines:
+                            dates.extend(re.findall(r'\b(\d{2}/\d{2})\b', l))
                         post_date = dates[0] if len(dates) > 0 else ""
                         trans_date = dates[1] if len(dates) > 1 else post_date
                         
                         # 提取金额
-                        amt_m = re.search(r'([\d,]+\.\d{2})', curr_to_next)
-                        amount = float(amt_m.group(1).replace(',', '')) if amt_m else 0.0
-                        
-                        # 提取 MCC
-                        mcc_m = re.search(r'\b(\d{4})\b', combined_text)
-                        mcc = mcc_m.group(1) if mcc_m else ""
-                        
-                        # 清理交易描述
-                        raw_lines = [re.sub(r'^[|\s]+', '', l).strip() for l in combined_text.split('\n') if l.strip()]
-                        desc_words = []
-                        for l in raw_lines:
-                            if re.search(r'[A-Za-z]{2,}', l) and not re.search(r'Account Number|Total Activity|Posting Transaction|Description|Charge|Credit|Page \d', l):
-                                desc_words.append(l)
+                        amount = 0.0
+                        for l in tx_lines:
+                            a_found = re.findall(r'([\d,]+\.\d{2})', l)
+                            if a_found:
+                                amount = float(a_found[-1].replace(',', ''))
                                 
-                        desc = " ".join(desc_words) if desc_words else "Credit Card Charge"
+                        # 提取 MCC
+                        mcc = ""
+                        for l in tx_lines:
+                            m_found = re.findall(r'\b(\d{4})\b', l)
+                            for m in m_found:
+                                if m not in post_date and m not in trans_date:
+                                    mcc = m
+                                    break
+                            if mcc:
+                                break
+                                
+                        # 提取纯净交易描述（过滤掉日期、MCC、卡号、金额）
+                        desc_parts = []
+                        for l in tx_lines:
+                            if re.search(r'Account Number|Total Activity|Posting Transaction|Description|Charge|Credit|Page \d|BANK OF AMERICA', l, re.I):
+                                continue
+                            if re.match(r'^\d{2}/\d{2}$', l) or re.match(r'^\d{2}/\d{2}\s+\d{2}/\d{2}$', l):
+                                continue
+                            if re.match(r'^[\$\d,.]+$', l) or re.match(r'^\d{4}$', l) or ref_num in l:
+                                continue
+                                
+                            clean_l = re.sub(r'^\d{2}/\d{2}\s+\d{2}/\d{2}\s*', '', l)
+                            clean_l = re.sub(r'^\d{2}/\d{2}\s*', '', clean_l)
+                            clean_l = re.sub(r'\s*\d{2}/\d{2}$', '', clean_l)
+                            clean_l = re.sub(r'\s*[\$\d,.]+$', '', clean_l)
+                            clean_l = re.sub(r'\s*\d{4}$', '', clean_l)
+                            clean_l = clean_l.strip('|\s')
+                            
+                            if clean_l and re.search(r'[A-Za-z]{2,}', clean_l):
+                                desc_parts.append(clean_l)
+                                
+                        desc = " ".join(desc_parts[:2]) if desc_parts else "Card Charge"
                         
                         all_transactions.append([
                             period_name, holder_name, card_last4,
@@ -127,7 +153,7 @@ def extract_pdf_data(uploaded_files):
     return summary_by_period, all_transactions
 
 def generate_excel_bytes(summary_by_period, transactions):
-    """生成包含顶端统计公式、自动冻结表头与校验的 Excel 文件"""
+    """生成 Excel 报表"""
     wb = openpyxl.Workbook()
 
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -146,24 +172,23 @@ def generate_excel_bytes(summary_by_period, transactions):
     ws_det = wb.create_sheet(title="交易明细")
     ws_det.views.sheetView[0].showGridLines = True
     
-    # 在表头上方（第 1 行与第 2 行）添加两个求和公式
-    ws_det.cell(row=1, column=1, value="CRAZY MAPLE STUDIO 金额合计 (Total Amount)").font = bold_font
-    ws_det.cell(row=1, column=1).fill = stat_fill
+    # 根据需求 1：清空 A1 与 A2 单元格
+    ws_det.cell(row=1, column=1, value="")
+    ws_det.cell(row=2, column=1, value="")
+
+    # I 列添加顶部求和公式
     c_s1 = ws_det.cell(row=1, column=9, value='=SUMIF(B4:B5000, "CRAZY MAPLE STUDIO*", I4:I5000)')
     c_s1.font = bold_font
     c_s1.fill = stat_fill
     c_s1.number_format = "$#,##0.00"
     c_s1.alignment = Alignment(horizontal="right", vertical="center")
 
-    ws_det.cell(row=2, column=1, value="非 CRAZY MAPLE STUDIO 金额合计 (Other Holders Total Amount)").font = bold_font
-    ws_det.cell(row=2, column=1).fill = stat_fill
     c_s2 = ws_det.cell(row=2, column=9, value='=SUMIFS(I4:I5000, B4:B5000, "<>CRAZY MAPLE STUDIO*", J4:J5000, "Charge")')
     c_s2.font = bold_font
     c_s2.fill = stat_fill
     c_s2.number_format = "$#,##0.00"
     c_s2.alignment = Alignment(horizontal="right", vertical="center")
 
-    # 填充第一行和第二行空余列的边框和背景
     for r in [1, 2]:
         for col_i in range(1, 11):
             ws_det.cell(row=r, column=col_i).border = thin_border
@@ -194,11 +219,14 @@ def generate_excel_bytes(summary_by_period, transactions):
 
     last_detail_row = len(transactions) + 3
 
-    # 修正顶部公式范围至具体数据末行
+    # 更新顶部公式的数据最大有效行
     ws_det.cell(row=1, column=9, value=f'=SUMIF(B4:B{last_detail_row}, "CRAZY MAPLE STUDIO*", I4:I{last_detail_row})')
     ws_det.cell(row=2, column=9, value=f'=SUMIFS(I4:I{last_detail_row}, B4:B{last_detail_row}, "<>CRAZY MAPLE STUDIO*", J4:J{last_detail_row}, "Charge")')
 
-    # 自动冻结前 3 行（使数据滚动时固定显示统计行与表头）
+    # 根据需求 3：给第 3 行表头开启自动筛选下拉按钮 (AutoFilter)
+    ws_det.auto_filter.ref = f"A3:J{last_detail_row}"
+
+    # 自动冻结前 3 行
     ws_det.freeze_panes = "A4"
 
     for col in ws_det.columns:
@@ -268,9 +296,7 @@ def generate_excel_bytes(summary_by_period, transactions):
     g_cell.alignment = Alignment(horizontal="right", vertical="center")
     g_cell.border = total_border
 
-    # -------------------------------------------------------------
-    # 3. Check 校验行 (交易明细表除了 CRAZY MAPLE STUDIO 的金额减去 首页合计 Total)
-    # -------------------------------------------------------------
+    # 3. Check 校验行 (联动的为交易明细表 I2 单元格：非 CRAZY MAPLE STUDIO 金额合计)
     check_row = tot_row + 2
     ws_sum.cell(row=check_row, column=1, value="check").font = bold_font
     c_check = ws_sum.cell(row=check_row, column=len(periods) + 2)
