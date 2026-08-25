@@ -71,6 +71,15 @@ _PASSENGER_RE = re.compile(r'^[A-Z]+/[A-Z]+\s*$')
 # 正则: Arrival 续行  "Arrival: 07/08/26"
 _ARRIVAL_RE = re.compile(r'Arrival:\s*\d{2}/\d{2}/\d{2}')
 
+# 正则: Cardholder Activity Summary 表格行
+#   格式: 持卡人姓名 \n XXXX-XXXX-XXXX-卡号末四位 \n 数字行(5个数)
+#   5个数依次为: Credit Limit, Credits, Cash, Purchases and Other Debits, Total Activity
+_CARDHOLDER_SUMMARY_RE = re.compile(
+    r'([A-Z][A-Z\s,.]+?)\n'
+    r'XXXX-XXXX-XXXX-(\d{4})\n'
+    r'([\d,]+(?:\s+[\d,]+){4})'
+)
+
 # 需要跳过的非交易行关键词
 _SKIP_KEYWORDS = {
     'Total Activity', 'Account Number', 'Posting', 'Transaction',
@@ -195,6 +204,40 @@ def _parse_section_content(content, period, holder_name, card_last4):
     return total_activity, txns
 
 
+def parse_cardholder_summary(text, main_acct_last4):
+    """
+    从 PDF 的「Cardholder Activity Summary」表格提取汇总数据。
+    返回 {持卡人名: Total Activity 金额} (排除公司层级)。
+    表格格式:
+        BHAGAT, KRUTI V
+        XXXX-XXXX-XXXX-4574
+        200,000 0.00 0.00 16,954.88 16,954.88   <- 5个数，最后一个为 Total Activity
+    """
+    summary = {}
+
+    # 定位最后一个 Cardholder Activity Summary 表格 (实际数据表)
+    idx = text.rfind('Cardholder Activity Summary')
+    if idx == -1:
+        return summary
+
+    # 限定解析范围到 Transactions 之前，避免误匹配交易明细区
+    tx_idx = text.find('Transactions', idx)
+    segment = text[idx:tx_idx] if tx_idx > idx else text[idx:]
+
+    for m in _CARDHOLDER_SUMMARY_RE.finditer(segment):
+        holder = m.group(1).strip()
+        card_last4 = m.group(2)
+        numbers = [float(x.replace(',', '')) for x in m.group(3).split()]
+        if len(numbers) != 5:
+            continue
+        total_activity = numbers[-1]
+        # 排除公司层级 (卡号与主账户相同 或 名称为 CRAZY MAPLE STUDIO)
+        if card_last4 != main_acct_last4 and 'CRAZY MAPLE' not in holder.upper():
+            summary[holder] = total_activity
+
+    return summary
+
+
 def parse_pdf(file_bytes):
     """
     解析单个 PDF 账单，返回:
@@ -229,7 +272,9 @@ def parse_pdf(file_bytes):
     section_pattern = r'([A-Z][A-Z\s,.]+?)\nAccount Number:\s*XXXX-XXXX-XXXX-(\d{4})'
     sections = list(re.finditer(section_pattern, tx_text))
 
-    summary = {}
+    # 汇总 Dashboard 数据来源: Cardholder Activity Summary (排除公司层级)
+    summary = parse_cardholder_summary(text, main_acct_last4)
+
     transactions = []
 
     for idx, section in enumerate(sections):
@@ -241,17 +286,27 @@ def parse_pdf(file_bytes):
         end_pos = sections[idx + 1].start() if idx + 1 < len(sections) else len(tx_text)
         content = tx_text[start_pos:end_pos]
 
-        # 逐行解析区块
-        total_activity, txns = _parse_section_content(
+        # 逐行解析交易明细 (汇总不再从这里取)
+        _, txns = _parse_section_content(
             content, period, holder_name, card_last4
         )
 
-        # 汇总 (排除公司层级)
-        if total_activity is not None:
-            if card_last4 != main_acct_last4 and 'CRAZY MAPLE' not in holder_name:
-                summary[holder_name] = total_activity
-
         transactions.extend(txns)
+
+    # 兜底: 若 Cardholder Activity Summary 解析失败, 退回从交易明细区 Total Activity 提取
+    if not summary:
+        for idx, section in enumerate(sections):
+            holder_name = section.group(1).strip()
+            card_last4 = section.group(2)
+            start_pos = section.end()
+            end_pos = sections[idx + 1].start() if idx + 1 < len(sections) else len(tx_text)
+            content = tx_text[start_pos:end_pos]
+            total_m = re.search(r'Total Activity\s*(-?\$?[\d,]+\.\d{2})', content)
+            if total_m:
+                total_str = total_m.group(1).replace('$', '').replace(',', '')
+                total_amount = float(total_str)
+                if card_last4 != main_acct_last4 and 'CRAZY MAPLE' not in holder_name:
+                    summary[holder_name] = total_amount
 
     return period, summary, transactions
 
