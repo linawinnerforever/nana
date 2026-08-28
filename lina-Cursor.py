@@ -143,14 +143,14 @@ def build_kingdee_voucher(draft_file_obj, date_str):
         result_rows.append(row)
         entry_seq += 1
 
-    # 5. 生成贷方分录 (科目 2202.01)
+    # 5. 生成贷方分录 (科目 1123.04)
     total_debit_amount = round(total_debit_amount, 2)
     credit_row = [
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         entry_seq,                                  # 18: 分录序号
         explanation,                                # 19: 摘要
-        '2202.01',                                  # 20: 贷方科目编码
+        '1123.04',                                  # 20: 贷方科目编码
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
