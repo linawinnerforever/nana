@@ -142,14 +142,14 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=21, value="6601.03.01")  # FACCOUNTID
         
         ws.cell(row=current_row, column=25, value=p_project)  # FDetailID#FF100002 (对应第25列：项目段编码)
-        ws.cell(row=current_row, column=49, value="7000")  # FDetailID#FFlex5 (对应第49列：项目#编码 7000)
-        ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
-        ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
-        ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
-        ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
-        ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
+        ws.cell(row=current_row, column=49, value="70000")  # FDetailID#FFlex5 (对应第49列：项目#编码 7000)
+        ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
+        ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
+        ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
+        ws.cell(row=current_row, column=60, value="固定汇率")  # FEXCHANGERATETYPE#Name
+        ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
         
-        cell_dr = ws.cell(row=current_row, column=65, value=round(p_spent, 2)) # 第65列 FDEBIT
+        cell_dr = ws.cell(row=current_row, column=67, value=round(p_spent, 2)) # 第67列 FDEBIT
         cell_dr.number_format = '#,##0.00'
         
         current_row += 1
@@ -158,13 +158,13 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=20, value=explanation)  # FEXPLANATION
         ws.cell(row=current_row, column=21, value="2202.02")  # FACCOUNTID
         ws.cell(row=current_row, column=51, value=p_code)  # FDetailID#FFlex4 (对应第51列：供应商#编码)
-        ws.cell(row=current_row, column=55, value="PRE007")  # FCURRENCYID
-        ws.cell(row=current_row, column=56, value="美元")  # FCURRENCYID#Name
-        ws.cell(row=current_row, column=57, value="HLTX01_SYS")  # FEXCHANGERATETYPE
-        ws.cell(row=current_row, column=58, value="固定汇率")  # FEXCHANGERATETYPE#Name
-        ws.cell(row=current_row, column=59, value=1)  # FEXCHANGERATE
+        ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
+        ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
+        ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
+        ws.cell(row=current_row, column=60, value="固定汇率")  # FEXCHANGERATETYPE#Name
+        ws.cell(row=current_row, column=61, value=1)  # FEXCHANGERATE
         
-        cell_cr = ws.cell(row=current_row, column=66, value=round(p_spent, 2)) # 第66列 FCREDIT
+        cell_cr = ws.cell(row=current_row, column=68, value=round(p_spent, 2)) # 第68列 FCREDIT
         cell_cr.number_format = '#,##0.00'
         
         current_row += 1
