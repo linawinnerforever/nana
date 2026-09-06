@@ -206,7 +206,7 @@ if uploaded_file is not None:
             excel_data, total_entries, total_amt = build_kingdee_voucher(uploaded_file, voucher_date_input)
             st.success(f"转换成功！生成凭证分录 {total_entries} 条，凭证总金额 ${total_amt:,.2f}")
             
-            file_name = f"金蝶上传凭证_{voucher_date_input.strftime('%Y%m')}.xlsx"
+            file_name = f"Claude_金蝶上传凭证_{voucher_date_input.strftime('%Y%m')}.xlsx"
             st.download_button(
                 label="📥 点击下载金蝶凭证上传文件",
                 data=excel_data,
