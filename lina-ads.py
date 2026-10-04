@@ -9,7 +9,7 @@ import re
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
 st.title("📊 投放费用月度数据汇总与透视工具")
-st.markdown("特性：**彻底修复了 groupby 分组时『开户服务商』列名不匹配引发的 KeyError 报错。** 71列金蝶凭证及视觉美化完全合规。")
+st.markdown("特性：**投放费用月度数据汇总与透视工具。")
 
 # 提供双文件上传器
 col_u1, col_u2 = st.columns(2)
