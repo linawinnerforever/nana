@@ -142,7 +142,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=21, value="6601.03.01")  # FACCOUNTID
         
         ws.cell(row=current_row, column=25, value=p_project)  # FDetailID#FF100002 (对应第25列：项目段编码)
-        ws.cell(row=current_row, column=49, value="C0000005")  # FDetailID#FFlex5 (对应第49列：部门#编码 C000005)
+        ws.cell(row=current_row, column=49, value="C000005")  # FDetailID#FFlex5 (对应第49列：部门#编码 C000005)
         ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
