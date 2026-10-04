@@ -21,8 +21,8 @@ with col_u2:
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
-    'reelshort-PWA': {'product': 'Reelshort', 'entity': 'NL'}, 
-    'reelshort-H5': {'product': 'Reelshort', 'entity': 'NL'},
+    'PWA': {'product': 'Reelshort', 'entity': 'NL'}, 
+    'H5': {'product': 'Reelshort', 'entity': 'NL'},
     '小程序': {'product': 'Reelshort', 'entity': 'NL'},
     'rsnovel': {'product': 'RS N', 'entity': 'NL'},
     'goro': {'product': 'Gorogoro', 'entity': 'CM'},
@@ -32,8 +32,8 @@ PRODUCT_MAPPING = {
 REQUIRED_SHEETS = {
     'Advertising-Chapters': {'key': 'chapters', 'product': 'CHAPTERS', 'entity': 'CM'},
     'Advertising-Kiss': {'key': 'kiss', 'product': 'KISS', 'entity': 'MH'},
-    'Advertising-Reelshort-PWA': {'key': 'reelshort-PWA', 'product': 'Reelshort', 'entity': 'NL'},
-    'Advertising-Reelshort-H5': {'key': 'reelshort-H5', 'product': 'Reelshort', 'entity': 'NL'},
+    'Advertising-Reelshort-PWA': {'key': 'PWA', 'product': 'Reelshort', 'entity': 'NL'},
+    'Advertising-Reelshort-H5': {'key': 'H5', 'product': 'Reelshort', 'entity': 'NL'},
     'Advertising-Reelshort-TT': {'key': '小程序', 'product': 'Reelshort', 'entity': 'CM'},
     'Advertising-RS N': {'key': 'rsnovel', 'product': 'RS N', 'entity': 'NL'},
     'Advertising-Goro': {'key': 'goro', 'product': 'Gorogoro', 'entity': 'CM'},
