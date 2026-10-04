@@ -21,9 +21,10 @@ with col_u2:
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
-    'PWA': {'product': 'Reelshort', 'entity': 'NL'}, 
+    'APP': {'product': 'Reelshort', 'entity': 'NL'},
     'H5': {'product': 'Reelshort', 'entity': 'NL'},
     '小程序': {'product': 'Reelshort', 'entity': 'NL'},
+    'PWA': {'product': 'Reelshort', 'entity': 'NL'},
     'rsnovel': {'product': 'RS N', 'entity': 'NL'},
     'goro': {'product': 'Gorogoro', 'entity': 'CM'},
     'readshort': {'product': 'Readshort', 'entity': 'CM'}
@@ -32,9 +33,10 @@ PRODUCT_MAPPING = {
 REQUIRED_SHEETS = {
     'Advertising-Chapters': {'key': 'chapters', 'product': 'CHAPTERS', 'entity': 'CM'},
     'Advertising-Kiss': {'key': 'kiss', 'product': 'KISS', 'entity': 'MH'},
-    'Advertising-Reelshort-PWA': {'key': 'pwa', 'product': 'Reelshort', 'entity': 'NL'},
+    'Advertising-Reelshort-APP': {'key': 'app', 'product': 'Reelshort', 'entity': 'NL'},
     'Advertising-Reelshort-H5': {'key': 'h5', 'product': 'Reelshort', 'entity': 'NL'},
-    'Advertising-Reelshort-TT': {'key': '小程序', 'product': 'Reelshort', 'entity': 'CM'},
+    'Advertising-Reelshort-TT': {'key': '小程序', 'product': 'Reelshort', 'entity': 'NL'},
+    'Advertising-Reelshort-PWA': {'key': 'pwa', 'product': 'Reelshort', 'entity': 'NL'},
     'Advertising-RS N': {'key': 'rsnovel', 'product': 'RS N', 'entity': 'NL'},
     'Advertising-Goro': {'key': 'goro', 'product': 'Gorogoro', 'entity': 'CM'},
     'Advertising-Readshort': {'key': 'readshort', 'product': 'Readshort', 'entity': 'CM'}
