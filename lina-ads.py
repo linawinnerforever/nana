@@ -529,7 +529,7 @@ if uploaded_files:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-        st.markdown("### 💰 金蝶 K/3 Cloud 标准财务凭证一键导入接口 (71列改挂对齐版)")
+        st.markdown("### 💰 金蝶云星空标准财务凭证一键导入接口")
         c_v1, c_v2 = st.columns(2)
         with c_v1:
             st.download_button(
