@@ -8,7 +8,7 @@ import re
 
 st.set_page_config(page_title="投放费用数据智能汇总工具", layout="wide")
 
-st.title("📊 投放费用月度数据汇总与透视工具 V36 (KeyError 修复版)")
+st.title("📊 投放费用月度数据汇总与透视工具")
 st.markdown("特性：**彻底修复了 groupby 分组时『开户服务商』列名不匹配引发的 KeyError 报错。** 71列金蝶凭证及视觉美化完全合规。")
 
 # 提供双文件上传器
@@ -142,7 +142,7 @@ def build_openpyxl_voucher_strict_71(df_source, entity_name, month_str):
         ws.cell(row=current_row, column=21, value="6601.03.01")  # FACCOUNTID
         
         ws.cell(row=current_row, column=25, value=p_project)  # FDetailID#FF100002 (对应第25列：项目段编码)
-        ws.cell(row=current_row, column=49, value="70000")  # FDetailID#FFlex5 (对应第49列：项目#编码 7000)
+        ws.cell(row=current_row, column=49, value="C0000005")  # FDetailID#FFlex5 (对应第49列：部门#编码 C000005)
         ws.cell(row=current_row, column=57, value="PRE007")  # FCURRENCYID
         ws.cell(row=current_row, column=58, value="美元")  # FCURRENCYID#Name
         ws.cell(row=current_row, column=59, value="HLTX01_SYS")  # FEXCHANGERATETYPE
