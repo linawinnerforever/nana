@@ -21,7 +21,7 @@ with col_u2:
 PRODUCT_MAPPING = {
     'chapters': {'product': 'CHAPTERS', 'entity': 'CM'},
     'kiss': {'product': 'KISS', 'entity': 'MH'},
-    'Block': {'product': 'Block', 'entity': 'CM'}
+    'Block': {'product': 'Block', 'entity': 'CM'},
     'APP': {'product': 'Reelshort', 'entity': 'NL'},
     'H5': {'product': 'Reelshort', 'entity': 'NL'},
     '小程序': {'product': 'Reelshort', 'entity': 'NL'},
