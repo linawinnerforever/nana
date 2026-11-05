@@ -5,13 +5,17 @@ import calendar
 import streamlit as st
 import io
 
-def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, vendor_name_text):
+def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, summary_text, credit_account):
     """
-    针对单家供应商（OpenAI 或 Google）数据生成标准金蝶凭证
+    针对单家供应商/产品数据生成标准金蝶凭证
+    :param sub_df: 筛选后的单供应商数据切片
+    :param data_cols: 项目段列索引与编码映射
+    :param date_formatted: 凭证日期格式化字符串 (YYYY-MM-DD)
+    :param year: 会计年度
+    :param month: 期间月份
+    :param summary_text: 动态生成的定制摘要
+    :param credit_account: 贷方科目编码 ('1123.04' 或 '2202.01')
     """
-    month_abbr = calendar.month_abbr[month]
-    fixed_summary = f"计提{year}年{month}月服务器成本-{month_abbr}.{year} server cost accrual-{vendor_name_text}"
-    
     parsed_rows = []
     
     for idx, row in sub_df.iterrows():
@@ -34,7 +38,7 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
                             'proj_code': proj_code,
                             'vendor_code': vendor_code,
                             'account_code': account_code,
-                            'summary': fixed_summary,
+                            'summary': summary_text,
                             'amount': amt_val
                         })
                 except ValueError:
@@ -85,6 +89,7 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
     entry_seq = 1
     last_vendor = ""
 
+    # 生成借方分录
     for item in parsed_rows:
         amt = item['amount']
         total_debit_amount += amt
@@ -123,9 +128,9 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
             np.nan, np.nan, np.nan,                 # 51-53
             hainan_code,                            # 54: 海南剧集#编码
             np.nan,                                 # 55
-            'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1,
-            np.nan, np.nan, np.nan, np.nan,
-            np.nan,                                 # 65: 原币金额
+            'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1, # 56-60
+            np.nan, np.nan, np.nan, np.nan,         # 61-64
+            np.nan,                                 # 65: 原币金额 (留空)
             amt,                                    # 66: 借方金额
             np.nan,                                 # 67: 贷方金额
             np.nan, np.nan, np.nan, np.nan, np.nan  # 68-72
@@ -133,18 +138,24 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
         result_rows.append(row)
         entry_seq += 1
 
+    # 生成贷方分录 (根据配置为 1123.04 或 2202.01)
     total_debit_amount = round(total_debit_amount, 2)
     credit_row = [
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        entry_seq, fixed_summary, '2202.01',
+        entry_seq,                                  # 18: 分录序号
+        summary_text,                               # 19: 摘要
+        credit_account,                             # 20: 贷方科目编码 (Cursor 为 1123.04，其余为 2202.01)
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
-        last_vendor, np.nan, np.nan, np.nan, np.nan, np.nan,
+        last_vendor,                                # 50: 供应商编码
+        np.nan, np.nan, np.nan, np.nan, np.nan,
         'PRE007', '美元', 'HLTX01_SYS', '固定汇率', 1,
         np.nan, np.nan, np.nan, np.nan,
-        np.nan, np.nan, total_debit_amount,
+        np.nan,                                     # 65: 原币金额 (留空)
+        np.nan,                                     # 66: 借方金额
+        total_debit_amount,                         # 67: 贷方金额
         np.nan, np.nan, np.nan, np.nan, np.nan
     ]
     result_rows.append(credit_row)
@@ -167,89 +178,121 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
             if cell_orgid.value is not None:
                 cell_orgid.value = str(cell_orgid.value)
 
-    output_stream.getvalue() # Ensure stream data
+    output_stream.getvalue()
     return output_stream.getvalue(), entry_seq, total_debit_amount
 
 
 def process_server_cost_sheet(draft_file_obj, date_str):
+    """
+    读取分摊底稿，生成 Google Cloud、OpenAI、Cursor、Claude 四张凭证
+    """
     voucher_date = datetime.datetime.strptime(str(date_str), "%Y-%m-%d")
     year = voucher_date.year
     month = voucher_date.month
+    month_abbr = calendar.month_abbr[month] # 如 Oct, Nov
     
     _, last_day = calendar.monthrange(year, month)
     date_formatted = f"{year}-{month:02d}-{last_day:02d}"
 
     df_raw = pd.read_excel(draft_file_obj, sheet_name=0, header=None)
     
+    # 提取第 0 行的项目段编码
     proj_row = df_raw.iloc[0].values
     data_cols = []
-    for c in range(14, 23):
+    for c in range(14, len(proj_row)):
         v = str(proj_row[c]).strip()
         if v != 'nan' and v != '' and v.isdigit():
             data_cols.append((c, v.zfill(3)))
 
-    openai_sub_df = df_raw[df_raw.iloc[:, 2] == 'OpenAI']
-    google_sub_df = df_raw[df_raw.iloc[:, 2] == 'Google cloud']
-
-    openai_data, openai_entries, openai_amt = build_single_vendor_voucher(
-        openai_sub_df, data_cols, date_formatted, year, month, vendor_name_text="OpenAI, LLC"
-    )
-    
-    google_data, google_entries, google_amt = build_single_vendor_voucher(
-        google_sub_df, data_cols, date_formatted, year, month, vendor_name_text="Google Cloud"
-    )
-
-    return {
-        'OpenAI': (openai_data, openai_entries, openai_amt),
-        'Google': (google_data, google_entries, google_amt)
+    # 4 个产品的配置参数：(供应商匹配正则/字符串, 摘要格式, 贷方科目)
+    products_config = {
+        'Google': {
+            'match_pattern': r'google',
+            'summary': f"计提{year}年{month:02d}月服务器成本-{month_abbr}.{year} server cost accrual-Google Cloud",
+            'credit_account': '2202.01',
+            'title': 'Google Cloud'
+        },
+        'OpenAI': {
+            'match_pattern': r'openai',
+            'summary': f"计提{year}年{month:02d}月服务器成本-{month_abbr}.{year} server cost accrual-OpenAI, LLC",
+            'credit_account': '2202.01',
+            'title': 'OpenAI'
+        },
+        'Cursor': {
+            'match_pattern': r'cursor',
+            'summary': f"计提{year}年{month:02d}月Cursor消耗",
+            'credit_account': '1123.04',
+            'title': 'Cursor'
+        },
+        'Claude': {
+            'match_pattern': r'claude',
+            'summary': f"计提{year}年{month:02d}月Claude消耗",
+            'credit_account': '2202.01',
+            'title': 'Claude'
+        }
     }
 
+    # 提取供应商列 (Col 2)
+    vendor_col = df_raw.iloc[:, 2].astype(str)
+
+    results = {}
+    for key, cfg in products_config.items():
+        sub_df = df_raw[vendor_col.str.contains(cfg['match_pattern'], case=False, na=False)]
+        
+        file_bytes, entries_cnt, total_amt = build_single_vendor_voucher(
+            sub_df, 
+            data_cols, 
+            date_formatted, 
+            year, 
+            month, 
+            summary_text=cfg['summary'], 
+            credit_account=cfg['credit_account']
+        )
+        results[key] = {
+            'data': file_bytes,
+            'entries': entries_cnt,
+            'total_amt': total_amt,
+            'title': cfg['title'],
+            'credit_account': cfg['credit_account']
+        }
+
+    return results
+
 # --- Streamlit 网页前端界面 ---
-st.title("📊 OpenAI & Google金蝶入账凭证生成工具")
+st.title("📊 服务器与AI产品金蝶入账凭证生成工具")
 
-uploaded_file = st.file_uploader("请选择或拖入当月【测试服务器成本分摊汇总表】Excel 文件", type=["xlsx", "xls"])
-voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 7, 31))
+uploaded_file = st.file_uploader("请选择或拖入当月【成本分摊汇总表】Excel 文件", type=["xlsx", "xls"])
+voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 10, 31))
 
-# 初始化 Session State，用于持久化保存生成结果
-if 'generated_results' not in st.session_state:
-    st.session_state.generated_results = None
+# 持久化存储结果，避免点击下载按钮时刷新丢失
+if 'multi_product_results' not in st.session_state:
+    st.session_state.multi_product_results = None
 
-# 当用户点击“生成凭证”时，触发数据解析并存入 session_state
 if uploaded_file is not None:
-    if st.button("🚀 开始自动转换 (生成 OpenAI 与 Google 凭证)"):
-        with st.spinner("正在解析底稿并生成凭证..."):
+    if st.button("🚀 开始自动转换 (同时生成 4 款产品凭证)"):
+        with st.spinner("正在解析底稿并生成各产品凭证..."):
             try:
-                st.session_state.generated_results = process_server_cost_sheet(uploaded_file, voucher_date_input)
+                st.session_state.multi_product_results = process_server_cost_sheet(uploaded_file, voucher_date_input)
                 st.session_state.date_tag = voucher_date_input.strftime('%Y%m')
             except Exception as e:
                 st.error(f"转换过程出现错误：{str(e)}")
 
-# 渲染生成结果区域（只要 session_state 有数据，点击下载就不丢失）
-if st.session_state.generated_results is not None:
+# 渲染生成结果区域
+if st.session_state.multi_product_results is not None:
     st.subheader("生成结果：")
-    date_tag = st.session_state.get('date_tag', '202607')
-    results = st.session_state.generated_results
+    date_tag = st.session_state.get('date_tag', voucher_date_input.strftime('%Y%m'))
+    results = st.session_state.multi_product_results
     
-    # OpenAI 下载区
-    openai_data, openai_entries, openai_amt = results['OpenAI']
-    if openai_data:
-        st.success(f"✅ OpenAI 凭证生成成功：共 {openai_entries} 条分录，总金额 ${openai_amt:,.2f}")
-        st.download_button(
-            label="📥 点击下载【OpenAI 金蝶凭证】",
-            data=openai_data,
-            file_name=f"OpenAI_金蝶上传凭证_{date_tag}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_download_openai"
-        )
-    
-    # Google 下载区
-    google_data, google_entries, google_amt = results['Google']
-    if google_data:
-        st.success(f"✅ Google 凭证生成成功：共 {google_entries} 条分录，总金额 ${google_amt:,.2f}")
-        st.download_button(
-            label="📥 点击下载【Google 金蝶凭证】",
-            data=google_data,
-            file_name=f"Google_金蝶上传凭证_{date_tag}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="btn_download_google"
-        )
+    # 2x2 网格或列表展示各产品的下载按钮
+    for key, res in results.items():
+        if res['data'] is not None:
+            st.success(f"✅ **{res['title']}** 凭证生成成功：共 {res['entries']} 条分录，总金额 ${res['total_amt']:,.2f}（贷方科目: `{res['credit_account']}`）")
+            st.download_button(
+                label=f"📥 点击下载【{res['title']} 金蝶凭证】",
+                data=res['data'],
+                file_name=f"{key}_金蝶上传凭证_{date_tag}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"btn_download_{key}"
+            )
+        else:
+            st.warning(f"⚠️ 未在底稿中检测到 **{res['title']}** 的有效拆分数据（或金额均为 0）。")
