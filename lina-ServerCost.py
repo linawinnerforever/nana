@@ -8,13 +8,6 @@ import io
 def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, summary_text, credit_account):
     """
     针对单家供应商/产品数据生成标准金蝶凭证
-    :param sub_df: 筛选后的单供应商数据切片
-    :param data_cols: 项目段列索引与编码映射
-    :param date_formatted: 凭证日期格式化字符串 (YYYY-MM-DD)
-    :param year: 会计年度
-    :param month: 期间月份
-    :param summary_text: 动态生成的定制摘要
-    :param credit_account: 贷方科目编码 ('1123.04' 或 '2202.01')
     """
     parsed_rows = []
     
@@ -95,6 +88,7 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
         total_debit_amount += amt
         is_first = (entry_seq == 1)
         
+        # 针对 6401.03.04 科目自动匹配海南剧集编码 025
         hainan_code = '025' if item['account_code'] == '6401.03.04' else np.nan
         last_vendor = item['vendor_code']
 
@@ -138,14 +132,14 @@ def build_single_vendor_voucher(sub_df, data_cols, date_formatted, year, month, 
         result_rows.append(row)
         entry_seq += 1
 
-    # 生成贷方分录 (根据配置为 1123.04 或 2202.01)
+    # 生成贷方分录 (Cursor 贷方为 1123.04，其余为 2202.01)
     total_debit_amount = round(total_debit_amount, 2)
     credit_row = [
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         entry_seq,                                  # 18: 分录序号
         summary_text,                               # 19: 摘要
-        credit_account,                             # 20: 贷方科目编码 (Cursor 为 1123.04，其余为 2202.01)
+        credit_account,                             # 20: 贷方科目编码
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
         np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan,
@@ -194,9 +188,10 @@ def process_server_cost_sheet(draft_file_obj, date_str):
     _, last_day = calendar.monthrange(year, month)
     date_formatted = f"{year}-{month:02d}-{last_day:02d}"
 
+    # 始终读取第一个工作表
     df_raw = pd.read_excel(draft_file_obj, sheet_name=0, header=None)
     
-    # 提取第 0 行的项目段编码
+    # 1. 提取第 0 行的项目段编码列
     proj_row = df_raw.iloc[0].values
     data_cols = []
     for c in range(14, len(proj_row)):
@@ -204,7 +199,18 @@ def process_server_cost_sheet(draft_file_obj, date_str):
         if v != 'nan' and v != '' and v.isdigit():
             data_cols.append((c, v.zfill(3)))
 
-    # 4 个产品的配置参数：(供应商匹配正则/字符串, 摘要格式, 贷方科目)
+    # 2. 动态定位真正的表头行（包含“成本中心编码”和“供应商”），严格排除顶部汇总区域
+    header_row_idx = 5 # 默认兜底为第5行
+    for r in range(min(15, len(df_raw))):
+        row_str = " ".join([str(x) for x in df_raw.iloc[r].values])
+        if "成本中心编码" in row_str and "供应商" in row_str:
+            header_row_idx = r
+            break
+
+    # 核心：明细数据必须从表头行的下一行开始提取
+    df_data_only = df_raw.iloc[header_row_idx + 1:].copy()
+
+    # 3. 4 款产品的专属配置
     products_config = {
         'Google': {
             'match_pattern': r'google',
@@ -232,12 +238,11 @@ def process_server_cost_sheet(draft_file_obj, date_str):
         }
     }
 
-    # 提取供应商列 (Col 2)
-    vendor_col = df_raw.iloc[:, 2].astype(str)
+    vendor_col = df_data_only.iloc[:, 2].astype(str)
 
     results = {}
     for key, cfg in products_config.items():
-        sub_df = df_raw[vendor_col.str.contains(cfg['match_pattern'], case=False, na=False)]
+        sub_df = df_data_only[vendor_col.str.contains(cfg['match_pattern'], case=False, na=False)]
         
         file_bytes, entries_cnt, total_amt = build_single_vendor_voucher(
             sub_df, 
@@ -264,7 +269,7 @@ st.title("📊 服务器与AI产品金蝶入账凭证生成工具")
 uploaded_file = st.file_uploader("请选择或拖入当月【成本分摊汇总表】Excel 文件", type=["xlsx", "xls"])
 voucher_date_input = st.date_input("凭证日期", value=datetime.date(2026, 10, 31))
 
-# 持久化存储结果，避免点击下载按钮时刷新丢失
+# 持久化存储结果，解决下载按钮刷新问题
 if 'multi_product_results' not in st.session_state:
     st.session_state.multi_product_results = None
 
@@ -283,10 +288,9 @@ if st.session_state.multi_product_results is not None:
     date_tag = st.session_state.get('date_tag', voucher_date_input.strftime('%Y%m'))
     results = st.session_state.multi_product_results
     
-    # 2x2 网格或列表展示各产品的下载按钮
     for key, res in results.items():
         if res['data'] is not None:
-            st.success(f"✅ **{res['title']}** 凭证生成成功：共 {res['entries']} 条分录，总金额 ${res['total_amt']:,.2f}（贷方科目: `{res['credit_account']}`）")
+            st.success(f"✅ **{res['title']}** 凭证生成成功：共 {res['entries']} 条分录，总借贷金额 ${res['total_amt']:,.2f}（贷方科目: `{res['credit_account']}`）")
             st.download_button(
                 label=f"📥 点击下载【{res['title']} 金蝶凭证】",
                 data=res['data'],
@@ -295,4 +299,4 @@ if st.session_state.multi_product_results is not None:
                 key=f"btn_download_{key}"
             )
         else:
-            st.warning(f"⚠️ 未在底稿中检测到 **{res['title']}** 的有效拆分数据（或金额均为 0）。")
+            st.warning(f"⚠️ 未在底稿中检测到 **{res['title']}** 的有效拆分数据。")
