@@ -183,7 +183,7 @@ def process_server_cost_sheet(draft_file_obj, date_str):
     
     proj_row = df_raw.iloc[0].values
     data_cols = []
-    for c in range(14, 21):
+    for c in range(14, 23):
         v = str(proj_row[c]).strip()
         if v != 'nan' and v != '' and v.isdigit():
             data_cols.append((c, v.zfill(3)))
